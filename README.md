@@ -21,6 +21,15 @@ A modern, responsive web app for memorizing and reviewing the Holy Quran: listen
   2. شغّل `start-dev.bat`، أو ارفع الموقع على الإنترنت. جوجل مش بيسمح بتسجيل الدخول والملف مفتوح دبل كليك من الجهاز.
   3. من صفحة الحساب الصق كود `firebaseConfig`.
 
+## النشر على GitHub Pages
+
+- **أسهل طريقة:** ارفع الملفين `index.html` و `QuranCompanion.html` من النسخة دي مكان القديمين في الريبو.
+  - `index.html` لو اتفتح على أي موقع، بيفتح `QuranCompanion.html` لوحده.
+- **أو:** ارفع محتوى فولدر `github-pages` بس، وفيه `index.html` جاهز، والموقع يفتح على اللينك الأساسي مباشرة.
+- **بعد الرفع:**
+  - استنى دقيقة لحد ما GitHub يحدّث الموقع، وبعدين اعمل `Ctrl + F5`.
+  - لو عايز تسجيل الدخول بجوجل: ضيف دومين الموقع (مثلًا `quran-companion.github.io`) في Firebase من Authentication ← Settings ← Authorized domains.
+
 ## Windows — how to open the app
 
 > Double-clicking `index.html` also works now: it automatically opens `QuranCompanion.html`, which sits next to it.
