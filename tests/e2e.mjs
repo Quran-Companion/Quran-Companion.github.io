@@ -306,14 +306,11 @@ try {
 
     // 14. Account (guest)
     await go('/account');
-    if (mode === 'file') {
+    if (base.startsWith('file:')) {
       check('Account (file://) explains Google sign-in needs localhost/hosting', await waitFor('.notice'), (await text('.notice p'))?.slice(0, 60));
     } else {
-      check('Account shows Firebase setup steps', await waitFor('.setup-card textarea'));
-      await page.type('.setup-card textarea', 'const firebaseConfig = {\n apiKey: "AIzaSyTEST-not-real",\n authDomain: "demo-test.firebaseapp.com",\n projectId: "demo-test",\n storageBucket: "demo-test.appspot.com",\n messagingSenderId: "1",\n appId: "1:1:web:abc"\n};');
-      await Promise.all([page.waitForNavigation({ waitUntil: 'load' }), page.click('.setup-card .btn-primary')]);
-      check('After pasting config, Google sign-in button appears', await waitFor('.btn-google', 8000));
-      check('App still works with Firebase enabled', (await count('.topbar')) === 1);
+      check('Account shows Google sign-in right away (config built in)', await waitFor('.btn-google', 8000));
+      check('No setup form for visitors', (await count('.setup-card textarea')) === 0);
       await page.evaluate(() => localStorage.removeItem('qc:firebase-config'));
     }
 

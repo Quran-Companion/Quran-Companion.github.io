@@ -24,6 +24,19 @@ const envConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
+/**
+ * The project's Firebase web config. These values are public by design (Firebase identifies the
+ * project with them; access is protected by Auth + the Firestore rules in firestore.rules).
+ */
+const BUILTIN_CONFIG = {
+  apiKey: 'AIzaSyDRnoazSof_GBrLSfeum-LcMJNwK51qtW8',
+  authDomain: 'quran-companion-47cf1.firebaseapp.com',
+  projectId: 'quran-companion-47cf1',
+  storageBucket: 'quran-companion-47cf1.firebasestorage.app',
+  messagingSenderId: '551652458680',
+  appId: '1:551652458680:web:36a206d9f54d55480cf44d',
+};
+
 const isComplete = (c) => Boolean(c && c.apiKey && c.authDomain && c.projectId && c.appId);
 
 /**
@@ -55,9 +68,10 @@ export function clearFirebaseConfig() {
   localStorage.removeItem(LOCAL_KEY);
 }
 
-const config = isComplete(envConfig) ? envConfig : readLocalConfig();
-/** 'env' | 'local' | null */
-export const firebaseConfigSource = isComplete(envConfig) ? 'env' : config ? 'local' : null;
+// Priority: .env.local → built-in project config → a config pasted on the Account page.
+const config = isComplete(envConfig) ? envConfig : isComplete(BUILTIN_CONFIG) ? BUILTIN_CONFIG : readLocalConfig();
+/** 'env' | 'builtin' | 'local' | null */
+export const firebaseConfigSource = isComplete(envConfig) ? 'env' : isComplete(BUILTIN_CONFIG) ? 'builtin' : config ? 'local' : null;
 export const firebaseProjectId = config?.projectId || null;
 
 // Firebase Auth needs an http(s) origin; a page opened straight from disk (file://) can't sign in.
