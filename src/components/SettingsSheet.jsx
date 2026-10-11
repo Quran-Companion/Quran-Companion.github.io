@@ -89,7 +89,16 @@ export default function SettingsSheet({ open, onClose, sections = ['audio', 'mem
               ) : (
                 <>
                 <div className="set-row">
-                  <span>{ar ? 'ينتقل للآية التالية بعد ما أسكت' : 'Next verse after I pause for'}</span>
+                  <span>{ar ? 'دقة التسميع' : 'How exact'}</span>
+                  <Pills
+                    value={s.reciteStrict}
+                    options={['easy', 'normal', 'strict']}
+                    onChange={(v) => s.update({ reciteStrict: v })}
+                    format={(v) => ({ easy: ar ? 'سهل' : 'Easy', normal: ar ? 'عادي' : 'Normal', strict: ar ? 'دقيق' : 'Strict' })[v]}
+                  />
+                </div>
+                <div className="set-row">
+                  <span>{ar ? 'وقت الانتظار بعد ما أسكت' : 'Wait after I pause'}</span>
                   <Pills
                     value={s.turnWait}
                     options={['fast', 'normal', 'slow']}

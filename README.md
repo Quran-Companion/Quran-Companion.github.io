@@ -12,7 +12,11 @@ A modern, responsive web app for memorizing and reviewing the Holy Quran: listen
 - **اختيار السورة:** في صفحة الحفظ اكتب اسم السورة (مثلًا: الكهف) أو رقمها، أو اختار "السورة كاملة".
 - **القرّاء:** ٣٥ قارئ متقسّمين (مصر / السعودية / أخرى). دوس على "القارئ" واكتب أي جزء من اسم الشيخ (مثلًا: المنشاوي). وفيهم مصحف الحصري المعلّم المناسب جدًا للحفظ.
 - **الخط:** خط مصحف المدينة هو الأساسي، وتقدر تغيّره من "خط المصحف" في صفحة السورة أو إعدادات جلسة الحفظ.
-- **ردّد مع الشيخ (تلقين):** من "طريقة الحفظ" اختار "ردّد مع الشيخ". الشيخ يقرأ الآية، وبعدين الميك يفتح وانت تقرأ وراه، ولما تسكت ثانية تقريبًا ينتقل للآية اللي بعدها. التطبيق بيسمع إنك اتكلمت وسكت بس، ومش بيصحّح التلاوة. ولو الميك مقفول هيظهرلك زرار "قرأتها، التالي".
+- **ردّد مع الشيخ (تلقين):** الشيخ يقرأ الآية، وبعدين انت تقرأها وراه. التطبيق بيتعرّف على كلامك (Speech Recognition) ويقارنه بالآية، **ومش بينتقل للآية اللي بعدها غير لما تقولها صح**. والكلمات بتنوّر وانت بتقولها، ولو الآية مخفية بتظهر كلمة كلمة.
+  - لو الكلام ناقص هيقولك "حاول تاني"، وفيه زرار "اسمع الشيخ تاني" وزرار "تخطّي".
+  - "دقة التسميع" في الإعدادات: سهل ٥٠٪، أو عادي ٧٠٪، أو دقيق ٩٠٪ من حروف الآية.
+  - التعرّف على الكلام شغال في Chrome وSafari ومحتاج إنترنت (الصوت بيتبعت لخدمة Google أو Apple عشان يتحوّل لكلام).
+  - لو المتصفح مش بيدعمه، زي بعض متصفحات ماسنجر وفيسبوك، هيقولك تفتح الموقع في Chrome أو Safari، ويظهرلك زرار "قرأتها، التالي".
 - **سرعة الميك:** الميكروفون بيتجهّز مرة واحدة أول ما تدوس "ابدأ التلقين"، وبعدها أول ما الشيخ يسكت بيبدأ يسمعك على طول (في الاختبار كان بين ١ و٣٥ مللي ثانية). وتقدر تختار من الإعدادات بعد قد إيه من سكوتك ينتقل للآية اللي بعدها: بسرعة، أو عادي، أو أطول.
 - **الاختيارات:** كلها في لوحة واحدة (زرار الإعدادات) فيها ٣ أقسام: طريقة الحفظ، والصوت، وشكل الخط.
 - **الصوت:** لكل شيخ أساسي فيه مصدر احتياطي، فلو ملف ماشتغلش يتجرب اللي بعده تلقائيًا.
@@ -192,4 +196,4 @@ What the checks cover: app renders (no blank page); Arabic RTL default and Engli
 
 `tests/talqeen.mjs` checks the repeat-after-the-sheikh mode with Chrome's fake microphone fed from `tests/fake-voice.wav` (silence → voice → silence): **15/15** in all three modes (voice detected, moves to the next verse, manual button, blocked-mic fallback, celebration, mic listening < 120 ms after the sheikh's audio ends — measured 1–35 ms — and no page freezes > 100 ms while memorizing).
 
-`tests/e2e.mjs` uses `puppeteer-core` with `@sparticuz/chromium` (Linux only) and expects `tests/tanzil-fixture.json` (generate it from the `quran` npm package's `data/qurandb` SQLite file — not included here so the repository contains no Quran text): `node tests/e2e.mjs file file:///path/to/QuranCompanion.html` or `node tests/e2e.mjs http http://localhost:5173` (add `--api-fail` for the failure scenario)..
+`tests/e2e.mjs` uses `puppeteer-core` with `@sparticuz/chromium` (Linux only) and expects `tests/tanzil-fixture.json` (generate it from the `quran` npm package's `data/qurandb` SQLite file — not included here so the repository contains no Quran text): `node tests/e2e.mjs file file:///path/to/QuranCompanion.html` or `node tests/e2e.mjs http http://localhost:5173` (add `--api-fail` for the failure scenario).

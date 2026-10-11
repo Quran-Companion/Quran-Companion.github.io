@@ -13,7 +13,25 @@ export function AyahNumber({ n }) {
   );
 }
 
-export function QuranText({ text, ayah, size = 'md', hidden = false, onReveal, revealLabel }) {
+/**
+ * marks: optional array (one entry per word) — words already recited are highlighted.
+ * mask:  with marks, words not yet recited are covered (they appear as you say them).
+ * The text is split on spaces only for styling; every character is rendered as received.
+ */
+export function QuranText({ text, ayah, size = 'md', hidden = false, onReveal, revealLabel, marks, mask = false }) {
+  if (marks) {
+    let w = -1;
+    return (
+      <p className={`quran quran-${size} quran-marked ${mask ? 'is-masked' : ''}`} lang="ar" dir="rtl">
+        {text.split(/(\s+)/).map((tok, i) => {
+          if (!tok.trim()) return tok;
+          w++;
+          return <span key={i} className={marks[w] ? 'w-ok' : 'w-todo'}>{tok}</span>;
+        })}
+        {ayah != null && <> <AyahNumber n={ayah} /></>}
+      </p>
+    );
+  }
   if (hidden) {
     return (
       <button type="button" className={`quran quran-${size} quran-hidden`} onClick={onReveal} aria-label={revealLabel}>

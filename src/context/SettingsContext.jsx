@@ -18,6 +18,7 @@ const defaults = {
   autoNext: true,
   hideOnTurn: false, // talqeen: hide the verse while it's your turn
   turnWait: 'normal', // talqeen: how long a pause ends your turn (fast | normal | slow)
+  reciteStrict: 'normal', // talqeen: how much of the verse must be said (easy | normal | strict)
 };
 
 const SettingsContext = createContext(null);

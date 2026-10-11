@@ -732,3 +732,44 @@ a.chip:hover { border-color: var(--primary); }
 /* Performance: keep moving parts on their own layers so the big Quran text isn't repainted every frame. */
 .eq span, .mic-ring, .turn-icon, .mic-orb { will-change: transform, opacity; }
 .stage-card, .turn-panel, .session-dock { contain: layout paint; }
+
+/* ===================== mobile dock (fits any phone width) ===================== */
+.session-dock { --dock-h: 84px; }
+.dock-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 4px; }
+.dock-row > .dock-btn:first-child { justify-self: start; }
+.dock-row > .dock-btn:last-child { justify-self: end; }
+.dock-btn { min-width: 0; max-width: 100%; padding: 8px 10px; white-space: nowrap; }
+.dock-btn span { overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.session-dock .transport { gap: 2px; }
+.session-dock .transport-spacer { display: none; }
+@media (max-width: 520px) {
+  .session-dock .play-btn { width: 56px; height: 56px; }
+  .session-dock .transport .icon-btn { width: 36px; height: 36px; }
+  .dock-btn { font-size: 0.72rem; padding: 6px 6px; }
+  .session-dock { padding: 8px 0 calc(8px + env(safe-area-inset-bottom)); }
+  .session-progress-meta { gap: 8px; }
+  .reciter-mini { display: inline-flex !important; max-width: 46%; }
+  .stage-card { padding: 22px 14px 24px; }
+  .stage-card .quran-xl { font-size: calc(clamp(1.9rem, 8.4vw, 2.6rem) * var(--quran-scale)); line-height: 2.15; }
+}
+@media (max-width: 360px) { .reciter-mini { display: none !important; } }
+
+/* Keep the talqeen panel (mic / "try again") visible just above the bottom bar on small screens. */
+.turn-panel { position: sticky; bottom: calc(var(--dock-h, 84px) + 10px + env(safe-area-inset-bottom)); z-index: 5; }
+@media (max-width: 520px) { .turn-panel { min-height: 0; padding: 12px 14px; gap: 6px; } .turn-panel .mic-orb { width: 64px; height: 64px; } }
+.session-stage { padding-bottom: 12px; }
+
+/* ===================== recitation check ===================== */
+.quran-marked .w-todo { transition: color 0.25s, background-color 0.25s; }
+.quran-marked .w-ok { color: var(--success); transition: color 0.25s; }
+[data-theme='dark'] .quran-marked .w-ok { color: #6fdca4; }
+.quran-marked.is-masked .w-todo { color: transparent; background: var(--surface-2); border-radius: 10px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.recite-meter { display: flex; align-items: center; gap: 8px; width: min(260px, 80%); }
+.recite-bar { flex: 1; height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.recite-bar span { display: block; height: 100%; background: var(--success); border-radius: inherit; transition: width 0.25s var(--ease); }
+.mic-orb { pointer-events: none; }
+.mic-orb:not(.is-listening):not(.is-speaking) { opacity: 0.6; }
+.mic-orb:not(.is-listening):not(.is-speaking) .mic-ring { animation: none; opacity: 0; }
+.mic-orb.is-speaking { animation: breathe 0.9s ease-in-out infinite; }
+.turn-icon.is-ok { background: var(--success); color: #fff; animation: pop 0.35s var(--ease) both; }
+.turn-passed strong { color: var(--success); }
