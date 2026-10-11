@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="description" content="Quran Companion — رفيقك في حفظ القرآن الكريم ومراجعته" />
     <meta name="theme-color" content="#0f3d34" />
-    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
     <link rel="preconnect" href="https://api.alquran.cloud" />
     <link rel="preconnect" href="https://everyayah.com" />
     <title>Quran Companion</title>
@@ -3579,29 +3579,5 @@ This typically indicates that your device does not have a healthy Internet conne
   </head>
   <body>
     <div id="root"></div>
-    <script>
-      // This is the SOURCE entry file. Opened directly from disk (double-click) it cannot run,
-      // because the browser can't load /src/main.jsx. In that case jump straight to the
-      // ready-built single-file app next to it. (In builds the source tag is gone, so this is inert.)
-      if (location.protocol === 'file:' && document.querySelector('script[type="module"][src="/src/main.jsx"]')) {
-        location.replace('QuranCompanion.html' + location.hash);
-      }
-      // Fallback if that file is missing: explain what to open instead of a blank page.
-      setTimeout(function () {
-        if (window.__QC_BOOTED) return;
-        var r = document.getElementById('root');
-        if (!r || r.childElementCount) return;
-        var file = location.protocol === 'file:';
-        r.innerHTML =
-          '<div style="max-width:620px;margin:12vh auto;padding:24px;font:16px/1.7 system-ui,sans-serif;color:#1c2522;background:#fff;border:1px solid #e4ddcd;border-radius:16px" dir="ltr">' +
-          '<h1 style="margin:0 0 8px;font-size:22px">Quran Companion could not start</h1>' +
-          (file
-            ? '<p>You opened the <b>source</b> <code>index.html</code>, which needs a development server.</p>' +
-              '<p><b>To open without installing anything:</b> double-click <code>QuranCompanion.html</code> in the project folder.</p>' +
-              '<p><b>To run the development version:</b> open a terminal in this folder and run <code>npm install</code> then <code>npm run dev</code>, and visit the address it prints.</p>'
-            : '<p>The app script failed to load. Check the browser console (F12) for details.</p>') +
-          '</div>';
-      }, 2500);
-    </script>
   </body>
 </html>

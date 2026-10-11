@@ -21,6 +21,15 @@ A modern, responsive web app for memorizing and reviewing the Holy Quran: listen
   2. شغّل `start-dev.bat`، أو ارفع الموقع على الإنترنت. جوجل مش بيسمح بتسجيل الدخول والملف مفتوح دبل كليك من الجهاز.
   3. من صفحة الحساب الصق كود `firebaseConfig`.
 
+## النشر على GitHub Pages
+
+- **أسهل طريقة:** ارفع الملفين `index.html` و `QuranCompanion.html` من النسخة دي مكان القديمين في الريبو.
+  - `index.html` لو اتفتح على أي موقع، بيفتح `QuranCompanion.html` لوحده.
+- **أو:** ارفع محتوى فولدر `github-pages` بس، وفيه `index.html` جاهز، والموقع يفتح على اللينك الأساسي مباشرة.
+- **بعد الرفع:**
+  - استنى دقيقة لحد ما GitHub يحدّث الموقع، وبعدين اعمل `Ctrl + F5`.
+  - لو عايز تسجيل الدخول بجوجل: ضيف دومين الموقع (مثلًا `quran-companion.github.io`) في Firebase من Authentication ← Settings ← Authorized domains.
+
 ## Windows — how to open the app
 
 > Double-clicking `index.html` also works now: it automatically opens `QuranCompanion.html`, which sits next to it.
@@ -183,4 +192,4 @@ What the checks cover: app renders (no blank page); Arabic RTL default and Engli
 
 `tests/talqeen.mjs` checks the repeat-after-the-sheikh mode with Chrome's fake microphone fed from `tests/fake-voice.wav` (silence → voice → silence): **15/15** in all three modes (voice detected, moves to the next verse, manual button, blocked-mic fallback, celebration, mic listening < 120 ms after the sheikh's audio ends — measured 1–35 ms — and no page freezes > 100 ms while memorizing).
 
-`tests/e2e.mjs` uses `puppeteer-core` with `@sparticuz/chromium` (Linux only) and expects `tests/tanzil-fixture.json` (generate it from the `quran` npm package's `data/qurandb` SQLite file — not included here so the repository contains no Quran text): `node tests/e2e.mjs file file:///path/to/QuranCompanion.html` or `node tests/e2e.mjs http http://localhost:5173` (add `--api-fail` for the failure scenario)..
+`tests/e2e.mjs` uses `puppeteer-core` with `@sparticuz/chromium` (Linux only) and expects `tests/tanzil-fixture.json` (generate it from the `quran` npm package's `data/qurandb` SQLite file — not included here so the repository contains no Quran text): `node tests/e2e.mjs file file:///path/to/QuranCompanion.html` or `node tests/e2e.mjs http http://localhost:5173` (add `--api-fail` for the failure scenario).
