@@ -1,0 +1,15 @@
+import chromium from '@sparticuz/chromium';
+import puppeteer from 'puppeteer-core';
+const src = process.argv[2];
+const b = await puppeteer.launch({ executablePath: await chromium.executablePath(), args: chromium.args, headless: true });
+const p = await b.newPage();
+const errs = [];
+p.on('pageerror', (e) => errs.push(e.message));
+await p.setRequestInterception(true);
+p.on('request', (r) => r.url().startsWith('https://') ? r.respond({ status: 503, headers: { 'Access-Control-Allow-Origin': '*' }, body: '' }) : r.continue());
+await p.goto(src, { waitUntil: 'load' });
+await new Promise((r) => setTimeout(r, 2000));
+console.log('URL:', decodeURI(p.url()));
+console.log('H1:', await p.$eval('h1', (e) => e.textContent).catch(() => null));
+console.log('page errors:', errs.length);
+await b.close();
