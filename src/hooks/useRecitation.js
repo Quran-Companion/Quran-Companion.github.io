@@ -28,6 +28,7 @@ export function useRecitation({
   const wantPlay = useRef(false);
   const counts = useRef({ verse: 0, range: 0 });
   const altIndex = useRef(0); // which backup URL we are on for the current verse
+  const stage = useRef('main'); // 'intro' while the Basmala plays before verse 1, then 'main'
   const [playing, setPlaying] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -50,8 +51,10 @@ export function useRecitation({
     if (!a || !v?.audio) return;
     altIndex.current = 0;
     setError(null);
-    if (a.src !== v.audio) {
-      a.src = v.audio;
+    const first = v.intro || v.audio;
+    stage.current = v.intro ? 'intro' : 'main';
+    if (a.src !== first) {
+      a.src = first;
       setLoading(true);
     } else {
       a.currentTime = 0;
@@ -75,8 +78,18 @@ export function useRecitation({
     const onCanPlay = () => setLoading(false);
     const onWaiting = () => setLoading(true);
     const onError = () => {
-      // Try the next backup source for this verse before reporting an error.
       const v = live.current.verses?.[live.current.index];
+      // Basmala failed: try its backups, else go straight to the verse.
+      if (stage.current === 'intro') {
+        const alt = v?.introAlts?.[altIndex.current];
+        if (alt) { altIndex.current += 1; a.src = alt; if (wantPlay.current) a.play().catch(() => {}); return; }
+        stage.current = 'main';
+        altIndex.current = 0;
+        a.src = v.audio;
+        if (wantPlay.current) a.play().catch(() => {});
+        return;
+      }
+      // Try the next backup source for this verse before reporting an error.
       const next = v?.audioAlts?.[altIndex.current];
       if (next) {
         altIndex.current += 1;
@@ -91,6 +104,13 @@ export function useRecitation({
     };
     const onEnded = () => {
       const L = live.current;
+      // Basmala done → the verse itself (not counted as a repeat).
+      if (stage.current === 'intro') {
+        const v = L.verses?.[L.index];
+        stage.current = 'main';
+        altIndex.current = 0;
+        if (v?.audio) { a.src = v.audio; a.play().catch(() => {}); return; }
+      }
       const c = counts.current;
       c.verse += 1;
       if (c.verse < L.repeatVerse) {
@@ -148,7 +168,7 @@ export function useRecitation({
   }, [index, currentUrl, load]);
 
   useEffect(() => {
-    if (audioRef.current) audioRef.current.playbackRate = speed;
+    if (audioRef.current) { audioRef.current.defaultPlaybackRate = speed; audioRef.current.playbackRate = speed; }
   }, [speed, currentUrl]);
 
   // Lock-screen / headset controls.

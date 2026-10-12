@@ -96,7 +96,15 @@ export function verseAudio(reciterId, surah, ayah, global) {
   const alts = [];
   if (r.cdn && global) alts.push(`${CDN}/${r.cdn}/${global}.mp3`);
   if (r.fallback) alts.push(`${EA}/${r.fallback}/${file}`);
-  return { audio: `${EA}/${r.folder}/${file}`, audioAlts: alts };
+  const out = { audio: `${EA}/${r.folder}/${file}`, audioAlts: alts };
+  // Verse-by-verse files start AFTER the Basmala. Before verse 1 of every surah except
+  // Al-Fatiha (where the Basmala is verse 1 itself) and At-Tawbah (which has none), play the
+  // same reciter's Basmala — his recitation of 1:1.
+  if (ayah === 1 && surah !== 1 && surah !== 9) {
+    out.intro = `${EA}/${r.folder}/001001.mp3`;
+    out.introAlts = [r.cdn ? `${CDN}/${r.cdn}/1.mp3` : null, r.fallback ? `${EA}/${r.fallback}/001001.mp3` : null].filter(Boolean);
+  }
+  return out;
 }
 
 /** Attach audio URLs for a reciter to verse objects (returns new objects; text untouched). */
