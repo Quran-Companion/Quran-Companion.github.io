@@ -46,21 +46,29 @@ function lev(a, b, max) {
 
 const allowedErrors = (len) => (len <= 3 ? 0 : len <= 6 ? 1 : 2);
 
-/** Find word `w` in `s` at or after `from` (exact first, then approximate). Returns end index or -1. */
-function find(s, w, from) {
-  const exact = s.indexOf(w, from);
+// Once part of the verse was heard, the next word must come within this many letters.
+// (Allows a few repeated / extra words, but stops a missed word from "matching" far ahead,
+// e.g. inside the next verse.)
+const GAP = 40;
+
+/** Find word `w` in `s` from `from` up to `until` (exact first, then approximate). Returns [start, end] or null. */
+function find(s, w, from, until = s.length) {
+  let exact = s.indexOf(w, from);
+  if (exact >= 0 && exact > until) exact = -1;
   const max = allowedErrors(w.length);
-  if (max === 0) return exact >= 0 ? exact + w.length : -1;
-  let bestEnd = exact >= 0 ? exact + w.length : -1;
-  const limit = exact >= 0 ? exact : s.length;
+  if (max === 0) return exact >= 0 ? [exact, exact + w.length] : null;
+  const limit = exact >= 0 ? exact : Math.min(s.length, until + 1);
   for (let j = from; j < limit; j++) {
     for (let L = w.length - max; L <= w.length + max; L++) {
       if (L <= 0 || j + L > s.length) continue;
-      if (lev(s.slice(j, j + L), w, max) <= max) return j + L;
+      if (lev(s.slice(j, j + L), w, max) <= max) return [j, j + L];
     }
   }
-  return bestEnd;
+  return exact >= 0 ? [exact, exact + w.length] : null;
 }
+
+/** The transcript as one string of letters (what positions below refer to). */
+export const saidSkeleton = (said) => skeleton(said).replace(/\s+/g, '');
 
 const BASMALA = 'بسم لله لرحمن لرحيم';
 
@@ -70,10 +78,13 @@ const BASMALA = 'بسم لله لرحمن لرحيم';
  *   next        — first word not heard yet (-1 when all were heard)
  *   miss        — first word that was skipped or said wrong, i.e. not heard while a LATER word was (-1 if none)
  *   after       — how many words were heard after `miss` (more = surer it's a real mistake)
+ *   start/end   — letter positions (in saidSkeleton) of the first / after the last heard word, -1 if none
+ *   complete    — every word was heard
+ * opts.from: start looking at this letter position (continuous recitation: where this verse began).
  *   coverage    — share of the verse's letters that were heard, 0..1
  *   skipped     — leading words not required (the Basmala printed at the top of verse 1)
  */
-export function matchRecitation(verseText, said, { surah, ayah } = {}) {
+export function matchRecitation(verseText, said, { surah, ayah } = {}, { from = 0, s: pre } = {}) {
   const words = verseWords(verseText);
   const sk = words.map(skeleton);
   const matched = sk.map((w) => !w); // tokens that are only marks (e.g. ۚ ۞) count as done
@@ -83,19 +94,21 @@ export function matchRecitation(verseText, said, { surah, ayah } = {}) {
     skipped = 4;
     for (let i = 0; i < 4; i++) matched[i] = true;
   }
-  const s = skeleton(said).replace(/\s+/g, '');
-  let pos = 0;
+  const s = pre ?? saidSkeleton(said);
+  let pos = from;
   let total = 0;
   let got = 0;
+  let start = -1;
   for (let i = skipped; i < sk.length; i++) {
     const w = sk[i];
     if (!w) continue;
     total += w.length;
-    const end = find(s, w, pos);
-    if (end >= 0) {
+    const hit = find(s, w, pos, start < 0 ? s.length : pos + GAP);
+    if (hit) {
       matched[i] = true;
       got += w.length;
-      pos = end;
+      if (start < 0) start = hit[0];
+      pos = hit[1];
     }
   }
   let last = sk.length - 1;
@@ -112,5 +125,5 @@ export function matchRecitation(verseText, said, { surah, ayah } = {}) {
       after += 1;
     }
   }
-  return { matched, coverage: total ? got / total : 0, lastMatched: last >= skipped && matched[last], skipped, next, miss, after };
+  return { matched, coverage: total ? got / total : 0, lastMatched: last >= skipped && matched[last], skipped, next, miss, after, real: sk.map(Boolean), start, end: start < 0 ? -1 : pos, complete: next < 0 };
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { matchRecitation } from '../lib/recite';
+import { matchRecitation, saidSkeleton } from '../lib/recite';
 
 const SR = typeof window !== 'undefined' ? window.SpeechRecognition || window.webkitSpeechRecognition : null;
 export const speechSupported = Boolean(SR);
@@ -17,7 +17,7 @@ export const speechSupported = Boolean(SR);
  *
  * Note: Chrome sends the audio to Google's speech service, Safari to Apple's (or on-device).
  */
-export function useReciteCheck({ threshold = 0.7, pauseMs = 1000, onSuccess, onMistake, mistakeAfter = 0 } = {}) {
+export function useReciteCheck({ threshold = 0.7, pauseMs = 1000, onSuccess, onMistake, mistakeAfter = 0, onVerse, onFlowEnd } = {}) {
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null); // { matched, coverage, lastMatched }
@@ -26,7 +26,7 @@ export function useReciteCheck({ threshold = 0.7, pauseMs = 1000, onSuccess, onM
   const turn = useRef(null); // { text, ctx, finals, active, lastAt, started }
   const timer = useRef(0);
   const cfg = useRef({});
-  cfg.current = { threshold, pauseMs, onSuccess, onMistake, mistakeAfter };
+  cfg.current = { threshold, pauseMs, onSuccess, onMistake, mistakeAfter, onVerse, onFlowEnd };
 
   const clear = () => clearInterval(timer.current);
 
@@ -77,8 +77,9 @@ export function useReciteCheck({ threshold = 0.7, pauseMs = 1000, onSuccess, onM
         else interim = Array.from(res).map((alt) => alt.transcript);
       }
       const base = T2.finals.join(' ');
-      const best = evaluate(interim.map((x) => `${base} ${x}`));
       T2.lastAt = performance.now();
+      if (T2.flow) { flowStep(T2, `${base} ${interim[0]}`); return; }
+      const best = evaluate(interim.map((x) => `${base} ${x}`));
       if (!best) return;
       setHeard(best.said.trim());
       setResult(best);
@@ -107,6 +108,89 @@ export function useReciteCheck({ threshold = 0.7, pauseMs = 1000, onSuccess, onM
     r.onend = () => { if (turn.current?.active && rec.current === r) { rec.current = null; setTimeout(listen, 60); } };
     try { r.start(); } catch (e) { console.warn('[speech] start', e); }
   }, [end]);
+
+  // ---- Continuous recitation ("flow"): one listening session follows you through the verses. ----
+  // Finished verses are reported with onVerse(index, result) — words not heard stay unmatched (shown red)
+  // — and listening carries on. A verse counts as finished when all of it was heard, when you start the
+  // next verse (or the one after, if you skipped one), or when you pause after reaching its end.
+  const finishVerse = (T, r) => {
+    const i = T.i;
+    T.i += 1;
+    T.cur = null;
+    setResult(null);
+    cfg.current.onVerse?.(T.base + i, r);
+    if (T.i >= T.list.length) { end('success'); cfg.current.onFlowEnd?.(); return false; }
+    return true;
+  };
+
+  // Did the person start this verse? (2 of its first 3 words heard, beginning with the 1st or 2nd)
+  const headHeard = (r) => {
+    const idx = [];
+    for (let i = r.skipped; i < r.matched.length && idx.length < 3; i++) if (r.real[i]) idx.push(i);
+    const heard = idx.filter((i) => r.matched[i]).length;
+    return heard >= Math.min(2, idx.length) && Boolean(r.matched[idx[0]] || r.matched[idx[1]]);
+  };
+
+  const flowStep = (T, text) => {
+    const s = saidSkeleton(text);
+    for (;;) {
+      const v = T.list[T.i];
+      if (!v) return;
+      const cur = matchRecitation(v.text, '', v.ctx, { from: T.offset, s });
+      if (cur.complete) { if (!finishVerse(T, cur)) return; T.offset = cur.end; continue; }
+      let moved = false;
+      for (let k = 1; k <= 2 && T.i + k < T.list.length && !moved; k++) {
+        const nv = T.list[T.i + k];
+        for (const from of cur.end >= 0 ? [cur.end, T.offset] : [T.offset]) {
+          const nx = matchRecitation(nv.text, '', nv.ctx, { from, s });
+          if (nx.start < 0 || !headHeard(nx)) continue;
+          if (from === T.offset && cur.start >= 0 && nx.start >= cur.start) continue;
+          // You moved on: this verse is done (judged only on what came before the next one).
+          const done = matchRecitation(v.text, '', v.ctx, { from: T.offset, s: s.slice(0, nx.start) });
+          if (!finishVerse(T, done)) return;
+          for (let j = 1; j < k; j++) { // a whole verse skipped
+            const sv = T.list[T.i];
+            if (!finishVerse(T, matchRecitation(sv.text, '', sv.ctx))) return;
+          }
+          T.offset = nx.start;
+          moved = true;
+          break;
+        }
+      }
+      if (moved) continue;
+      T.cur = cur;
+      setResult(cur);
+      setHeard(text.trim());
+      return;
+    }
+  };
+
+  /** Continuous recitation through `list` ([{ text, ctx }]); indexes reported from `base`. */
+  const startFlow = useCallback((list, base = 0) => {
+    clear();
+    stopRec();
+    setError(null);
+    setHeard('');
+    setResult(null);
+    if (!SR) { setError('unsupported'); setStatus('error'); return; }
+    turn.current = { flow: true, list, base, i: 0, offset: 0, cur: null, finals: [], active: true, lastAt: 0, started: performance.now() };
+    setStatus('starting');
+    listen();
+    timer.current = setInterval(() => {
+      const T = turn.current;
+      if (!T?.active) return clear();
+      const now = performance.now();
+      const { threshold: thr, pauseMs: pause } = cfg.current;
+      // Paused at the end of a verse (last word heard, or most of it) → it's done.
+      if (T.cur && T.lastAt && now - T.lastAt > pause && (T.cur.lastMatched || T.cur.coverage >= Math.max(thr, 0.85))) {
+        const r = T.cur;
+        if (finishVerse(T, r)) T.offset = r.end;
+        return;
+      }
+      // Nothing said for a long while → pause listening (you can carry on with one tap).
+      if (now - Math.max(T.lastAt, T.started) > 45000) end('retry');
+    }, 150);
+  }, [listen, end]);
 
   /** Start a turn for this verse. */
   const start = useCallback((text, ctx) => {
@@ -145,5 +229,5 @@ export function useReciteCheck({ threshold = 0.7, pauseMs = 1000, onSuccess, onM
 
   const stop = useCallback(() => { end('idle'); setResult(null); setHeard(''); }, [end]);
 
-  return { supported: speechSupported, status, error, result, heard, start, stop };
+  return { supported: speechSupported, status, error, result, heard, start, startFlow, stop };
 }

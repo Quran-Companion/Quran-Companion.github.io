@@ -778,3 +778,12 @@ a.chip:hover { border-color: var(--primary); }
 .mic-orb.is-speaking { animation: breathe 0.9s ease-in-out infinite; }
 .turn-icon.is-ok { background: var(--success); color: #fff; animation: pop 0.35s var(--ease) both; }
 .turn-passed strong { color: var(--success); }
+
+/* Tasmee (continuous recitation) */
+.prev-card { display: grid; gap: 4px; padding: 10px 16px; margin-bottom: 10px; border-radius: 18px; background: var(--bg-elev); border: 1px solid var(--border); opacity: 0.92; animation: fade-up 0.35s var(--ease, ease) both; }
+.prev-card.has-bad { border-color: var(--danger); }
+.prev-card .quran { margin: 0; }
+.recited-list { display: grid; gap: 10px; width: 100%; margin: 4px 0 14px; text-align: start; }
+.recited-row { display: grid; gap: 6px; justify-items: start; padding: 10px 14px; border-radius: 16px; border: 1px solid var(--border); background: var(--bg); }
+.recited-row.has-bad { border-color: var(--danger); background: var(--danger-soft); }
+.recited-row .quran { margin: 0; width: 100%; }

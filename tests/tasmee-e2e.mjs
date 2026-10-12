@@ -32,6 +32,9 @@ async function newPage({ speech = true, settings = {} } = {}) {
         stop() { this.on = false; this.onend?.(); }
       };
     }
+    window.__playing = 0;
+    const P = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function (...a) { if (!String(this.src).startsWith('data:')) window.__playing++; return P.apply(this, a); };
     window.__say = (text, final = true) => {
       const r = window.__rec; if (!r || !r.on) return false;
       const alt = { transcript: text, confidence: 0.9 }; const result = [alt]; result.isFinal = final;
@@ -55,101 +58,116 @@ const say = (p, text, final = true) => p.evaluate((t, f) => window.__say(t, f), 
 const waitTurn = async (p) => { await p.waitForSelector('.turn-you .mic-orb.is-listening', { timeout: 6000 }); };
 
 
-const visibleWords = (p) => p.$$eval('.quran-marked > span:not(.ayah-num)', (e) => e.map((x) => `${x.className}:${x.textContent}`));
-try {
-  const p = await newPage({ settings: { memMode: 'tasmee', reciteStrict: 'normal' } });
-  await p.goto(url('/memorize/session?surah=112&from=1&to=3'), { waitUntil: 'load' });
+
+const words = (p, sel = '.stage-card .quran-marked') => p.$$eval(`${sel} > span:not(.ayah-num)`, (e) => e.map((x) => `${x.className}:${x.textContent}`)).catch(() => []);
+const plain = (x) => x.replace(/[ً-ٰٟۖ-ۭ]/g, '');
+async function open(path, settings = {}) {
+  const p = await newPage({ settings: { memMode: 'tasmee', ...settings } });
+  await p.goto(url(path), { waitUntil: 'load' });
   if (base.startsWith('file:')) await p.reload({ waitUntil: 'load' });
   await p.waitForSelector('.turn-idle .btn-primary');
-  check('Mode chip says تسميع وتصحيح', (await p.$eval('.mode-chip', (e) => e.textContent)).includes('تسميع'));
-  check('Start button says ابدأ التسميع', (await p.$eval('.turn-idle .btn-primary', (e) => e.textContent)).includes('ابدأ التسميع'));
-  check('Verse is hidden before starting (recite from memory)', Boolean(await p.$('.quran-hidden')));
+  return p;
+}
+try {
+  // ===== 1. Continuous: mistakes are marked red, it never stops =====
+  const p = await open('/memorize/session?surah=112&from=1&to=4');
+  check('Verse hidden before starting', Boolean(await p.$('.quran-hidden')));
   p.__audio = [];
   await p.click('.turn-idle .btn-primary');
   await waitTurn(p);
-  check('Mic opens straight away — no sheikh first', p.__audio.length === 0, p.__audio.join(','));
-  let w = await visibleWords(p);
-  check('Words are covered while reciting', w.length > 0 && w.every((x) => x.startsWith('w-todo')), w.slice(0, 3).join(' '));
-  check('Masked mode is on', Boolean(await p.$('.quran-marked.is-masked')));
+  check('Mic opens straight away (no sheikh)', p.__audio.length === 0);
+  const startsBefore = await p.evaluate(() => window.__starts);
+  let w = await words(p);
+  check('Words covered while reciting', w.length && w.every((x) => x.startsWith('w-todo')), w.join(' '));
 
-  // ---- a correct verse 1 → next verse, still no sheikh ----
-  await say(p, 'قل هو الله احد');
-  await sleep(1000);
-  check('Correct verse → moves to verse 2', (await verseNo(p)).includes('٢'), await verseNo(p));
-  await waitTurn(p);
-  check('Verse 2: mic opens directly (sheikh did not read)', p.__audio.filter((x) => /112002/.test(x)).length <= 1 && !(await p.$('.turn-sheikh')));
+  await say(p, 'قل هو الله احد', false); // interim
+  await sleep(150);
+  check('Verse 1 said → moves to verse 2 immediately', (await verseNo(p)).includes('٢'), await verseNo(p));
+  w = await words(p, '.prev-card .quran-marked');
+  check('Previous verse shown above, all green', w.length && w.filter((x) => !x.startsWith('w-ok')).length === 0 && !(await p.$('.prev-card.has-bad')), w.join(' '));
 
-  // ---- wrong word on verse 2 (الله الصمد → الله الواحد ... ) — use verse 3 with more words instead ----
-  await say(p, 'الله الصمد');
-  await sleep(1000);
-  await waitTurn(p);
-  check('Verse 3 reached', (await verseNo(p)).includes('٣'), await verseNo(p));
-  // Verse 3: لَمْ يَلِدْ وَلَمْ يُولَدْ — say a wrong word in place of يلد and carry on
-  await say(p, 'لم يقل ولم يولد');
-  check('Wrong word → stops and shows "mistake" panel', await phaseIs(p, 'turn-wrong', 3000));
-  const wrongWord = await p.$eval('.wrong-word', (e) => e.textContent).catch(() => '');
-  await p.screenshot({ path: 'tasmee-wrong.png' });
-  check('Panel shows the correct word (يَلِدْ)', wrongWord.replace(/[ً-ٰٟ]/g, '') === 'يلد', wrongWord);
-  w = await visibleWords(p);
+  await say(p, 'قل هو الله احد الله الواحد', true); // wrong word in verse 2 (final)
+  await sleep(150);
+  check('A wrong word does NOT stop you (still listening on verse 2)', (await verseNo(p)).includes('٢') && Boolean(await p.$('.turn-you .mic-orb.is-listening')) && !(await p.$('.turn-wrong')));
+  await say(p, 'لم يلد ولم', false); // carries on with verse 3
+  await sleep(150);
+  check('Starting verse 3 → follows you to verse 3', (await verseNo(p)).includes('٣'), await verseNo(p));
+  w = await words(p, '.prev-card .quran-marked');
   const bad = w.filter((x) => x.startsWith('w-bad'));
-  check('That word is marked red in the verse', bad.length === 1 && bad[0].includes('يَلِدْ'), bad.join(' '));
-  check('Words said right are green', w.some((x) => x.startsWith('w-ok') && x.includes('لَمْ')), w.join(' '));
-  check('Verse stays on 3 (no moving on after a mistake)', (await verseNo(p)).includes('٣'));
-  check('The mistake is shown in the verse text exactly as received (no altered text)', (await p.$$eval('.quran-marked > span:not(.ayah-num)', (e) => e.map((x) => x.textContent).join(' '))) === FX.verses['112:3']);
-  p.__audio = [];
-  check('Then the sheikh reads the verse ("hear it right")', await phaseIs(p, 'turn-sheikh', 4000));
+  check('Verse 2 shown above with ٱلصَّمَدُ in red', bad.length === 1 && plain(bad[0]).includes('لصمد') && Boolean(await p.$('.prev-card.has-bad')), w.join(' '));
+  check('Verse 3 words said so far are green, rest covered', (await words(p)).map((x) => x.split(':')[0]).join(',') === 'w-ok,w-ok,w-ok,w-todo', (await words(p)).join(' '));
+  await say(p, 'لم يلد ولم يولد', true);
+  await sleep(150);
+  check('Verse 3 complete → verse 4', (await verseNo(p)).includes('٤'));
+
+  // ---- show a word / show the verse ----
+  await p.click('.turn-you [data-act="word"]');
+  await sleep(100);
+  w = await words(p);
+  check('"اظهر كلمة" reveals the first word only', w[0]?.startsWith('w-hint') && w.slice(1).every((x) => x.startsWith('w-todo')), w.join(' '));
+  await p.click('.turn-you [data-act="word"]');
+  await sleep(100);
+  w = await words(p);
+  check('…pressing again reveals the next word', w.filter((x) => x.startsWith('w-hint')).length === 2, w.join(' '));
+  await p.click('.turn-you [data-act="verse"]');
+  await sleep(100);
+  check('"اظهر الآية" shows the whole verse', !(await p.$('.stage-card .quran-marked.is-masked')));
+  check('…and the button becomes "اخفِ الآية"', (await p.$eval('.turn-you [data-act="verse"]', (e) => e.textContent)).includes('اخفِ'));
+  await p.click('.turn-you [data-act="verse"]');
+  await sleep(100);
+  check('"اخفِ الآية" hides it again', Boolean(await p.$('.stage-card .quran-marked.is-masked')));
+  check('Listening never stopped/restarted during all this', (await p.evaluate(() => window.__starts)) === startsBefore);
+  check('No sheikh audio playing while reciting (files only preloaded)', !(await p.$('.eq')) && (await p.evaluate(() => window.__playing || 0)) === 0);
+
+  await say(p, 'ولم يكن له كفوا احد', false);
   await sleep(300);
-  check('…the audio of verse 3 is requested', p.__audio.some((x) => x === '112003.mp3'), p.__audio.join(','));
-  w = await visibleWords(p);
-  check('…and the whole verse is visible while he reads', !(await p.$('.quran-marked.is-masked')));
-  await waitTurn(p);
-  check('After the sheikh, the mic opens again for the same verse', (await verseNo(p)).includes('٣'));
-  w = await visibleWords(p);
-  check('Retry starts covered again', w.every((x) => x.startsWith('w-todo')), w.join(' '));
-
-  // ---- forgetting: stop mid-verse ----
-  await say(p, 'لم يلد');
-  check('Stopping before the end (forgot) → shows the next word', await phaseIs(p, 'turn-wrong', 6000));
-  const forgot = await p.$eval('.wrong-word', (e) => e.textContent).catch(() => '');
-  check('…which is وَلَمْ', forgot.replace(/[ً-ٰٟ]/g, '') === 'ولم', forgot);
-  await phaseIs(p, 'turn-sheikh', 4000);
-  await waitTurn(p);
-
-  // ---- hint button ----
-  await p.click('.turn-you .btn-soft');
-  await sleep(200);
-  w = await visibleWords(p);
-  check('"ذكّرني بالكلمة" reveals just the next word', w.filter((x) => x.startsWith('w-hint')).length === 1 && w.find((x) => x.startsWith('w-hint')).includes('لَمْ'), w.join(' '));
-  await say(p, 'لم يلد ولم يولد');
-  await sleep(1000);
-  check('Correct recitation after correction → finishes the range', Boolean(await p.$('.done-card')));
+  check('Last verse said → finished', Boolean(await p.$('.done-card')));
   const sum = await p.$eval('.tasmee-summary', (e) => e.textContent).catch(() => '');
-  check('Summary: 2 of 3 without mistakes, 1 corrected', sum.includes('٢') && sum.includes('٣') && sum.includes('آية واحدة'), sum);
-  check('Button to mark only the correct ones as memorized', (await p.$$eval('.done-actions .btn', (e) => e.map((x) => x.textContent))).some((t) => t.includes('علّم اللي سمّعته صح')));
-  await p.screenshot({ path: 'tasmee-done.png' });
+  check('Summary: 3 of 4 right, 1 with a mistake', sum.includes('٣ من ٤') && sum.includes('آية واحدة فيها غلط'), sum);
+  const rows = await p.$$eval('.recited-row', (e) => e.map((x) => ({ bad: x.classList.contains('has-bad'), btn: Boolean(x.querySelector('button')), cls: [...x.querySelectorAll('.quran-marked > span:not(.ayah-num)')].map((y) => y.className) })));
+  check('All 4 verses listed with their marks', rows.length === 4, JSON.stringify(rows.map((r) => r.bad)));
+  check('Only verse 2 is red', rows.map((r) => r.bad).join() === 'false,true,false,false');
+  check('Verse 4 revealed words shown as hints (not mistakes)', rows[3].cls.filter((c) => c === 'w-hint').length === 2 && !rows[3].cls.includes('w-bad'), rows[3].cls.join(','));
+  check('"اسمعها من الشيخ" on the red verse (and the helped one)', rows[1].btn && rows[3].btn && !rows[0].btn);
+  p.__audio = [];
+  await p.click('.recited-row.has-bad button');
+  await sleep(1200);
+  check('…which plays that verse (112:2)', p.__audio.includes('112002.mp3'), p.__audio.join(','));
+  check('Text unchanged: verse rows show the exact verse text', (await p.$$eval('.recited-row .quran-marked', (e) => e.map((x) => [...x.querySelectorAll(':scope > span:not(.ayah-num)')].map((y) => y.textContent).join(' ')))).join('|') === [1, 2, 3, 4].map((a) => FX.verses[`112:${a}`]).join('|'));
+  await p.screenshot({ path: 'tasmee-done.png', fullPage: true });
 
-  // ---- strict: one word after the slip is enough; easy needs 3 ----
-  const q = await newPage({ settings: { memMode: 'tasmee', reciteStrict: 'easy' } });
-  await q.goto(url('/memorize/session?surah=67&from=2&to=2'), { waitUntil: 'load' });
-  if (base.startsWith('file:')) await q.reload({ waitUntil: 'load' });
-  await q.waitForSelector('.turn-idle .btn-primary');
+  // ===== 2. A skipped verse turns fully red =====
+  const q = await open('/memorize/session?surah=112&from=1&to=4');
   await q.click('.turn-idle .btn-primary');
   await waitTurn(q);
-  await say(q, 'الذي خلق الحياه والحياه', false);
-  await sleep(300);
-  check('Easy: one word after a slip is NOT enough to stop you (could be mis-hearing)', !(await q.$('.turn-wrong')));
-  await say(q, 'الذي خلق الحياه والحياه ليبلوكم ايكم احسن', false);
-  check('Easy: after 3 more words it stops at الموت', await phaseIs(q, 'turn-wrong', 2000));
-  check('…shows ٱلْمَوْتَ', ((await q.$eval('.wrong-word', (e) => e.textContent).catch(() => '')) === 'ٱلْمَوْتَ'));
+  await say(q, 'قل هو الله احد', true);
+  await sleep(100);
+  await say(q, 'لم يلد ولم', false); // verse 2 skipped entirely
+  await sleep(150);
+  check('Skipping verse 2 → follows you to verse 3', (await verseNo(q)).includes('٣'), await verseNo(q));
+  w = await words(q, '.prev-card .quran-marked');
+  check('Verse 2 shown all red', w.length === 2 && w.every((x) => x.startsWith('w-bad')), w.join(' '));
+  await q.screenshot({ path: 'tasmee-flow.png' });
 
-  // ---- settings sheet shows the 3 modes ----
+  // ===== 3. Pausing at the end of a verse with a missed word in the middle =====
+  const r = await open('/memorize/session?surah=67&from=2&to=3');
+  await r.click('.turn-idle .btn-primary');
+  await waitTurn(r);
+  await say(r, 'الذي خلق الموت والحياه ليبلوكم احسن عملا وهو العزيز الغفور', true); // missed ايكم
+  await sleep(2200);
+  check('Pause after the end of a verse → moves on', (await verseNo(r)).includes('٣'), await verseNo(r));
+  w = await words(r, '.prev-card .quran-marked');
+  check('…with the missed word (أَيُّكُمْ) red', w.filter((x) => x.startsWith('w-bad')).length === 1 && plain(w.find((x) => x.startsWith('w-bad'))).includes('يكم'), w.filter((x) => !x.startsWith('w-ok')).join(' '));
+  // Pause mid-verse (forgot): stays and waits — does not jump ahead
+  await say(r, 'الذي خلق سبع', false);
+  await sleep(2500);
+  check('Pausing mid-verse (forgot) → stays on the verse and keeps listening', (await verseNo(r)).includes('٣') && Boolean(await r.$('.turn-you .mic-orb.is-listening')));
+
+  // ===== 4. Mode card =====
   await p.goto(url('/memorize'), { waitUntil: 'load' });
-  await sleep(500);
-  const modes = await p.$$eval('.mode-card', (e) => e.map((x) => x.dataset.mode));
-  check('Mode chooser has 3 modes incl. tasmee', modes.join(',').includes('tasmee') && modes.length === 3, modes.join(','));
-  const ov = await p.evaluate(() => document.documentElement.scrollWidth - innerWidth);
-  check('Mode cards fit the phone screen', ov <= 0, `overflow ${ov}`);
-  await p.screenshot({ path: 'tasmee-modes.png', fullPage: false });
+  await sleep(400);
+  const desc = await p.$eval('.mode-card[data-mode="tasmee"]', (e) => e.textContent).catch(() => '');
+  check('Mode card describes non-stop recitation', desc.includes('من غير ما يوقّفك'), desc);
 } catch (e) { check('Run completed', false, e.stack); }
 check('No console errors', errs.length === 0, errs.slice(0, 3).join(' | '));
 console.log(`\n${res.filter(Boolean).length}/${res.length} passed`);
