@@ -28,6 +28,7 @@ export function ModeChooser() {
   const modes = [
     { id: 'listen', icon: 'repeat', title: ar ? 'استماع وتكرار' : 'Listen & repeat', desc: ar ? 'الشيخ يكرر الآية وأنت تسمع وتحفظ' : 'The sheikh repeats each verse while you listen' },
     { id: 'talqeen', icon: 'mic', title: ar ? 'ردّد مع الشيخ' : 'Repeat after the sheikh', desc: ar ? 'الشيخ يقرأ، ثم يُفتح الميك فتقرأ وراءه، ثم ينتقل للآية التالية' : 'He recites, the mic opens, you repeat, then the next verse plays' },
+    { id: 'tasmee', icon: 'target', title: ar ? 'سمّع وأنا أصحّحلك' : 'Recite & get corrected', desc: ar ? 'تقرأ من حفظك، ولو غلطت يوقّفك ويوريك الكلمة الصح ويسمّعهالك من الشيخ' : 'Recite from memory; a mistake stops you, shows the right word and the sheikh reads it' },
   ];
   return (
     <div className="mode-cards" role="radiogroup">
@@ -106,10 +107,10 @@ export default function SettingsSheet({ open, onClose, sections = ['audio', 'mem
                     format={(v) => ({ fast: ar ? 'بسرعة' : 'Short', normal: ar ? 'عادي' : 'Normal', slow: ar ? 'أطول' : 'Longer' })[v]}
                   />
                 </div>
-                <label className="switch">
+                {s.memMode === 'talqeen' && <label className="switch">
                   <input type="checkbox" checked={s.hideOnTurn} onChange={(e) => s.update({ hideOnTurn: e.target.checked })} />
                   <span className="switch-track" /> {ar ? 'إخفاء الآية وقت دوري (اختبار نفسي)' : 'Hide the verse on my turn (test myself)'}
-                </label>
+                </label>}
                 </>
               )}
             </section>

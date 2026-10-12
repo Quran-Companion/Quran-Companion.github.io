@@ -15,6 +15,7 @@ export function AyahNumber({ n }) {
 
 /**
  * marks: optional array (one entry per word) — words already recited are highlighted.
+ *        An entry can also be 'bad' (said wrong / skipped — shown in red) or 'hint' (revealed as a reminder).
  * mask:  with marks, words not yet recited are covered (they appear as you say them).
  * The text is split on spaces only for styling; every character is rendered as received.
  */
@@ -26,7 +27,8 @@ export function QuranText({ text, ayah, size = 'md', hidden = false, onReveal, r
         {text.split(/(\s+)/).map((tok, i) => {
           if (!tok.trim()) return tok;
           w++;
-          return <span key={i} className={marks[w] ? 'w-ok' : 'w-todo'}>{tok}</span>;
+          const m = marks[w];
+          return <span key={i} className={m === 'bad' ? 'w-bad' : m === 'hint' ? 'w-hint' : m ? 'w-ok' : 'w-todo'}>{tok}</span>;
         })}
         {ayah != null && <> <AyahNumber n={ayah} /></>}
       </p>

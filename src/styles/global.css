@@ -699,7 +699,7 @@ a.chip:hover { border-color: var(--primary); }
 .set-row > span { font-weight: 600; font-size: 0.92rem; color: var(--text-2); }
 .set-section .switch { margin: 0; }
 .sheet-foot { padding: 10px 16px 16px; border-top: 1px solid var(--border); }
-.mode-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.mode-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
 .mode-card {
   position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; text-align: start;
   padding: 14px; border-radius: 16px; border: 1.5px solid var(--border); background: var(--bg-elev); transition: border-color 0.2s, background 0.2s, transform 0.15s;
@@ -763,6 +763,11 @@ a.chip:hover { border-color: var(--primary); }
 .quran-marked .w-todo { transition: color 0.25s, background-color 0.25s; }
 .quran-marked .w-ok { color: var(--success); transition: color 0.25s; }
 [data-theme='dark'] .quran-marked .w-ok { color: #6fdca4; }
+.quran-marked .w-bad { color: var(--danger); background: var(--danger-soft); border-radius: 10px; padding: 0 4px; box-decoration-break: clone; -webkit-box-decoration-break: clone; animation: w-shake 0.45s var(--ease, ease); display: inline-block; }
+.quran-marked .w-hint { color: var(--warning); }
+@keyframes w-shake { 0%, 100% { transform: none; } 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
+@media (prefers-reduced-motion: reduce) { .quran-marked .w-bad { animation: none; } }
+.turn-wrong strong.wrong-word { font-family: var(--font-quran); font-size: 1.6em; font-weight: normal; color: var(--danger); line-height: 1.6; }
 .quran-marked.is-masked .w-todo { color: transparent; background: var(--surface-2); border-radius: 10px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 .recite-meter { display: flex; align-items: center; gap: 8px; width: min(260px, 80%); }
 .recite-bar { flex: 1; height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }

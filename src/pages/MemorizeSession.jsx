@@ -13,6 +13,7 @@ import { Transport } from '../components/AudioControls';
 import SettingsSheet, { LOOP } from '../components/SettingsSheet';
 import { ProgressBar } from '../components/ProgressRing';
 import { resolveReciter } from '../lib/reciters';
+import { matchRecitation, verseWords } from '../lib/recite';
 import Icon from '../components/Icon';
 
 export default function MemorizeSession() {
@@ -22,6 +23,8 @@ export default function MemorizeSession() {
   const { t, lang, reciter, speed, numberFmt, memMode, repeatVerse, repeatRange, autoNext, hideOnTurn, turnWait, reciteStrict } = S;
   const ar = lang === 'ar';
   const talqeen = memMode === 'talqeen';
+  const tasmee = memMode === 'tasmee'; // you recite from memory; a mistake stops you, shows the right word and the sheikh reads it
+  const voice = talqeen || tasmee;
   const { memorized, setMemorized, toggleMemorized, saveLastPosition } = useProgress();
 
   const surahN = clamp(Number(params.get('surah')) || 1, 1, 114);
@@ -40,7 +43,11 @@ export default function MemorizeSession() {
   const [showSettings, setShowSettings] = useState(false);
   // Talqeen phases: null (stopped) | 'prepare' | 'sheikh' (he recites) | 'you' (listening & checking)
   //                 | 'passed' (verse recited correctly) | 'retry' (not complete) | 'manual' (no speech recognition)
+  //                 tasmee adds: 'wrong' (a mistake was found) | 'correcting' (the sheikh reads the verse)
   const [phase, setPhase] = useState(null);
+  const [mistake, setMistake] = useState(null); // { at: word index, matched: [...] }
+  const [hintAt, setHintAt] = useState(-1); // word revealed by "remind me"
+  const [mistakes, setMistakes] = useState({}); // verse key → times corrected (tasmee)
   const indexRef = useRef(index);
   indexRef.current = index;
   const versesRef = useRef([]);
@@ -69,6 +76,8 @@ export default function MemorizeSession() {
       clearTimeout(passTimer.current);
       passTimer.current = setTimeout(advanceAfterTurn, 700);
     },
+    onMistake: tasmee ? (r, at) => onMistake(r, at) : undefined,
+    mistakeAfter: tasmee ? (MISTAKE_AFTER[reciteStrict] || MISTAKE_AFTER.normal) : 0,
   });
   const checkRef = useRef(check);
   checkRef.current = check;
@@ -83,17 +92,51 @@ export default function MemorizeSession() {
       setFinished(true);
       return;
     }
+    if (tasmee) {
+      // Straight on to reciting the next verse — the sheikh only speaks to correct.
+      indexRef.current = i + 1;
+      setIndex(i + 1);
+      startYourTurn(i + 1);
+      return;
+    }
     setPhase('sheikh');
     playerRef.current.playAt(i + 1);
   };
 
-  // Called the moment the sheikh's audio ends.
-  const startYourTurn = useCallback(() => {
-    const v = versesRef.current[indexRef.current];
+  // Called the moment the sheikh's audio ends (or right away in tasmee).
+  const startYourTurn = useCallback((at) => {
+    const v = versesRef.current[at ?? indexRef.current];
+    setMistake(null);
+    setHintAt(-1);
     if (!speechSupported || checkRef.current.error === 'denied' || !v) { setPhase('manual'); return; }
     setPhase('you');
     checkRef.current.start(v.text, { surah: v.surah, ayah: v.ayah });
   }, []);
+
+  // Tasmee: a word was skipped / said wrong → show it in red, then the sheikh reads the verse, then you try again.
+  const onMistake = (r, at) => {
+    const v = versesRef.current[indexRef.current];
+    if (!v) return;
+    setMistake({ at, matched: r.matched });
+    setMistakes((m) => ({ ...m, [v.key]: (m[v.key] || 0) + 1 }));
+    setPhase('wrong');
+    clearTimeout(passTimer.current);
+    passTimer.current = setTimeout(() => {
+      setPhase('correcting');
+      playerRef.current.playAt(indexRef.current);
+    }, 1600);
+  };
+
+  // "Remind me": reveal the next word you haven't said yet.
+  const giveHint = () => {
+    const v = versesRef.current[indexRef.current];
+    if (!v) return;
+    const r = checkRef.current.result || matchRecitation(v.text, '', { surah: v.surah, ayah: v.ayah });
+    if (r.next >= 0) {
+      setHintAt(r.next);
+      setMistakes((m) => ({ ...m, [v.key]: (m[v.key] || 0) + 1 }));
+    }
+  };
 
   // Not complete after a pause → "try again"; recognition unavailable → manual button.
   useEffect(() => {
@@ -107,12 +150,13 @@ export default function MemorizeSession() {
     reciter,
     index,
     onIndexChange: setIndex,
-    repeatVerse: talqeen ? 1 : repeatVerse,
-    repeatRange: talqeen ? 1 : repeatRange,
-    autoAdvance: talqeen ? false : autoNext,
+    repeatVerse: voice ? 1 : repeatVerse,
+    repeatRange: voice ? 1 : repeatRange,
+    autoAdvance: voice ? false : autoNext,
     speed,
     onFinish: ({ completedRange }) => {
       if (talqeen) { if (phase !== null) startYourTurn(); return; }
+      if (tasmee) { if (phase === 'correcting') startYourTurn(); return; }
       if (completedRange) setFinished(true);
     },
   });
@@ -132,12 +176,15 @@ export default function MemorizeSession() {
     setPhase('prepare');
     // Ask for the microphone now (so no prompt interrupts later), then free it for speech recognition.
     if (speechSupported) { await micRef.current.prepare(); micRef.current.release(); }
+    if (memModeRef.current === 'tasmee') { startYourTurn(); return; }
     setPhase('sheikh');
     playerRef.current.playAt(indexRef.current);
-  }, []);
+  }, [startYourTurn]);
+  const memModeRef = useRef(memMode);
+  memModeRef.current = memMode;
 
-  // Switching mode mid-session stops the talqeen loop.
-  useEffect(() => { if (!talqeen) stopTalqeen(); }, [talqeen, stopTalqeen]);
+  // Switching mode mid-session stops the voice loop.
+  useEffect(() => { playerRef.current?.pause(); stopTalqeen(); }, [memMode, stopTalqeen]);
 
   const current = verses[index];
   versesRef.current = verses;
@@ -152,14 +199,14 @@ export default function MemorizeSession() {
 
   const go = useCallback((delta) => {
     player.resetCounts();
-    if (talqeen) { player.pause(); stopTalqeen(); }
+    if (voice) { player.pause(); stopTalqeen(); }
     setFinished(false);
     setIndex((i) => clamp(i + delta, 0, verses.length - 1));
-  }, [player, verses.length, talqeen, stopTalqeen]);
+  }, [player, verses.length, voice, stopTalqeen]);
 
   // The big play button: in talqeen it starts/stops the whole sheikh → you → next loop.
-  const talqeenActive = talqeen && phase !== null;
-  const transportPlayer = talqeen
+  const talqeenActive = voice && phase !== null;
+  const transportPlayer = voice
     ? {
         ...player,
         playing: talqeenActive,
@@ -167,7 +214,7 @@ export default function MemorizeSession() {
           if (talqeenActive) { player.pause(); stopTalqeen(); }
           else startTalqeen();
         },
-        replay: () => { clearTimeout(passTimer.current); checkRef.current.stop(); setPhase('sheikh'); player.playAt(index); },
+        replay: () => { clearTimeout(passTimer.current); checkRef.current.stop(); setPhase(tasmee ? 'correcting' : 'sheikh'); player.playAt(index); },
       }
     : player;
 
@@ -188,11 +235,20 @@ export default function MemorizeSession() {
   const memCount = verses.filter((v) => memorized[v.key]).length;
   const isMem = current && Boolean(memorized[current.key]);
   const nextRange = to < total ? { from: to + 1, to: Math.min(total, to + (to - from + 1)) } : surahN < 114 ? { surah: surahN + 1 } : null;
-  const hideNow = (hidden || (talqeen && hideOnTurn && phase === 'manual')) && !peek;
+  const hideNow = (hidden || (talqeen && hideOnTurn && phase === 'manual') || (tasmee && [null, 'prepare', 'manual'].includes(phase))) && !peek;
   // While it's your turn, words light up as you say them (and appear one by one if the verse is hidden).
-  const checking = talqeen && ['you', 'retry', 'passed'].includes(phase);
-  const marks = checking ? (check.result?.matched || []) : null;
-  const maskWords = checking && (hidden || hideOnTurn) && !peek && phase !== 'passed';
+  const checking = voice && ['you', 'retry', 'passed'].includes(phase);
+  let marks = checking ? (check.result?.matched || []) : null;
+  let maskWords = checking && (hidden || hideOnTurn || tasmee) && !peek && phase !== 'passed';
+  if (tasmee && checking && hintAt >= 0 && !marks[hintAt]) { marks = [...marks]; marks[hintAt] = 'hint'; }
+  if (tasmee && mistake && ['wrong', 'correcting'].includes(phase)) {
+    // Words said right in green, the mistake in red; while the sheikh reads, the whole verse shows.
+    marks = [...mistake.matched];
+    marks[mistake.at] = 'bad';
+    maskWords = phase === 'wrong' && !peek;
+  }
+  const wrongWord = mistake && current ? verseWords(current.text)[mistake.at] : '';
+  const cleanKeys = verses.filter((v) => !mistakes[v.key]).map((v) => v.key);
   const reciterName = (() => { const r = resolveReciter(reciter); return (ar ? r.ar : r.en).replace(/\s*\(.*\)\s*$/, ''); })();
 
   return (
@@ -206,7 +262,7 @@ export default function MemorizeSession() {
           <span className="muted small">
             {ar ? `الآيات ${toArabicDigits(from)}–${toArabicDigits(to)}` : `Verses ${from}–${to}`}
             {' · '}
-            <span className="mode-chip">{talqeen ? (ar ? 'ردّد مع الشيخ' : 'Repeat after') : (ar ? 'استماع وتكرار' : 'Listen & repeat')}</span>
+            <span className="mode-chip">{tasmee ? (ar ? 'تسميع وتصحيح' : 'Recite & correct') : talqeen ? (ar ? 'ردّد مع الشيخ' : 'Repeat after') : (ar ? 'استماع وتكرار' : 'Listen & repeat')}</span>
           </span>
         </div>
         <button className="icon-btn" onClick={() => setShowSettings(true)} aria-label={ar ? 'الإعدادات' : 'Settings'}>
@@ -231,12 +287,12 @@ export default function MemorizeSession() {
           <div className={`stage-card verse-enter ${isMem ? 'is-memorized' : ''} ${phase === 'you' ? 'is-your-turn' : ''}`} key={current.key}>
             <div className="stage-meta">
               <span className="badge badge-soft">{t.common.verse} {numberFmt(current.ayah)}</span>
-              {!talqeen && player.playing && repeatVerse > 1 && (
+              {!voice && player.playing && repeatVerse > 1 && (
                 <span className="badge badge-soft">
                   <Icon name="repeat" size={14} /> {numberFmt(player.repeatState.verse + 1)}/{repeatVerse === LOOP ? '∞' : numberFmt(repeatVerse)}
                 </span>
               )}
-              {!talqeen && repeatRange > 1 && (
+              {!voice && repeatRange > 1 && (
                 <span className="badge badge-soft">{t.memorize.repeatRange} {numberFmt(player.repeatState.range + 1)}/{numberFmt(repeatRange)}</span>
               )}
               {isMem && <span className="badge badge-success"><Icon name="check" size={14} /> {t.common.memorized}</span>}
@@ -250,9 +306,12 @@ export default function MemorizeSession() {
         )}
 
         {/* Talqeen turn panel */}
-        {talqeen && current && !finished && (
+        {voice && current && !finished && (
           <TurnPanel
             ar={ar}
+            tasmee={tasmee}
+            wrongWord={wrongWord}
+            onHint={giveHint}
             phase={phase}
             check={check}
             playing={player.playing}
@@ -260,7 +319,7 @@ export default function MemorizeSession() {
             onStart={transportPlayer.toggle}
             onSkip={advanceAfterTurn}
             onRepeat={transportPlayer.replay}
-            onRetry={startYourTurn}
+            onRetry={() => startYourTurn()}
           />
         )}
 
@@ -269,12 +328,23 @@ export default function MemorizeSession() {
             <Confetti />
             <span className="done-icon"><Icon name="check" size={32} /></span>
             <h2>{t.memorize.done}</h2>
-            <p className="muted">{t.memorize.doneHint}</p>
+            {tasmee ? (
+              <p className="muted tasmee-summary">
+                {ar
+                  ? `سمّعت ${numberFmt(cleanKeys.length)} من ${numberFmt(verses.length)} آية صح من غير غلط` + (verses.length - cleanKeys.length ? (verses.length - cleanKeys.length === 1 ? '، وآية واحدة اتصححت لك.' : `، و${numberFmt(verses.length - cleanKeys.length)} آيات اتصححت لك.`) : ' — ما شاء الله!')
+                  : `${cleanKeys.length} of ${verses.length} verses recited without a mistake` + (verses.length - cleanKeys.length ? `, ${verses.length - cleanKeys.length} corrected.` : ' — excellent!')}
+              </p>
+            ) : <p className="muted">{t.memorize.doneHint}</p>}
             <div className="done-actions">
-              <button className="btn btn-primary" onClick={() => setMemorized(verses.map((v) => v.key), true)} disabled={memCount === verses.length}>
+              {tasmee && cleanKeys.length > 0 && cleanKeys.length < verses.length && (
+                <button className="btn btn-primary" onClick={() => setMemorized(cleanKeys, true)} disabled={cleanKeys.every((k) => memorized[k])}>
+                  <Icon name="check" /> {ar ? 'علّم اللي سمّعته صح كمحفوظ' : 'Mark the correct ones memorized'}
+                </button>
+              )}
+              <button className={`btn ${tasmee && cleanKeys.length < verses.length ? 'btn-soft' : 'btn-primary'}`} onClick={() => setMemorized(verses.map((v) => v.key), true)} disabled={memCount === verses.length}>
                 <Icon name="check" /> {t.memorize.markAll}
               </button>
-              <button className="btn btn-soft" onClick={() => { setFinished(false); setIndex(0); player.resetCounts(); }}>
+              <button className="btn btn-soft" onClick={() => { setFinished(false); setIndex(0); setMistakes({}); player.resetCounts(); }}>
                 <Icon name="replay" /> {ar ? 'أعد المقطع' : 'Repeat range'}
               </button>
               {nextRange && (
@@ -319,13 +389,15 @@ export default function MemorizeSession() {
 }
 
 /** The "sheikh / your turn" panel for talqeen mode. */
-function TurnPanel({ ar, phase, check, playing, numberFmt, onStart, onSkip, onRepeat, onRetry }) {
+function TurnPanel({ ar, tasmee, wrongWord, phase, check, playing, numberFmt, onStart, onSkip, onRepeat, onRetry, onHint }) {
   const pct = Math.round((check.result?.coverage || 0) * 100);
   if (phase === null) {
     return (
       <div className="turn-panel turn-idle">
-        <p>{ar ? 'الشيخ يقرأ الآية، ثم تقرأها أنت وراءه. لن ينتقل للآية التالية إلا عندما تقولها صحيحة.' : 'The sheikh recites, then you repeat. It moves on only when you say the verse correctly.'}</p>
-        <button className="btn btn-primary btn-lg" onClick={onStart}><Icon name="mic" /> {ar ? 'ابدأ التلقين' : 'Start'}</button>
+        <p>{tasmee
+          ? (ar ? 'اقرأ الآية من حفظك والميك مفتوح. لو غلطت في كلمة أو نسيتها، هوقّفك وأوريك الكلمة الصح ويقرأها لك الشيخ، وبعدين تعيد.' : 'Recite from memory with the mic on. If you get a word wrong or forget it, you\'ll see the right word, hear the sheikh read it, then try again.')
+          : (ar ? 'الشيخ يقرأ الآية، ثم تقرأها أنت وراءه. لن ينتقل للآية التالية إلا عندما تقولها صحيحة.' : 'The sheikh recites, then you repeat. It moves on only when you say the verse correctly.')}</p>
+        <button className="btn btn-primary btn-lg" onClick={onStart}><Icon name="mic" /> {tasmee ? (ar ? 'ابدأ التسميع' : 'Start reciting') : (ar ? 'ابدأ التلقين' : 'Start')}</button>
         {!speechSupported && <p className="muted small">{UNSUPPORTED[ar ? 'ar' : 'en']}</p>}
       </div>
     );
@@ -347,6 +419,25 @@ function TurnPanel({ ar, phase, check, playing, numberFmt, onStart, onSkip, onRe
         <span className="muted small turn-next">
           {playing ? <><Icon name="mic" size={14} /> {ar ? 'دورك أول ما يسكت الشيخ' : 'Your turn as soon as he stops'}</> : (ar ? 'جارٍ التحميل…' : 'Loading…')}
         </span>
+      </div>
+    );
+  }
+  if (phase === 'wrong') {
+    return (
+      <div className="turn-panel turn-retry turn-wrong">
+        <span className="turn-icon is-warn"><Icon name="alert" size={26} /></span>
+        <span className="muted small">{ar ? 'فيه غلطة هنا — الكلمة الصح:' : 'A mistake here — the right word is:'}</span>
+        <strong className="wrong-word" lang="ar">{wrongWord}</strong>
+        <span className="muted small">{ar ? 'اسمعها من الشيخ…' : 'Listen to the sheikh…'}</span>
+      </div>
+    );
+  }
+  if (phase === 'correcting') {
+    return (
+      <div className="turn-panel turn-sheikh">
+        <span className="turn-icon"><Icon name="headphones" size={26} /></span>
+        <strong>{ar ? 'اسمع الصح من الشيخ…' : 'Hear it right from the sheikh…'}</strong>
+        <span className="muted small turn-next"><Icon name="mic" size={14} /> {ar ? 'بعده هتسمّع الآية تاني' : 'Then recite the verse again'}</span>
       </div>
     );
   }
@@ -402,10 +493,11 @@ function TurnPanel({ ar, phase, check, playing, numberFmt, onStart, onSkip, onRe
         <span className="mic-ring r2" />
         <Icon name="mic" size={30} />
       </span>
-      <strong>{!listening && !speaking ? (ar ? 'ثانية…' : 'One moment…') : (ar ? 'دورك! اقرأ الآية' : 'Your turn! Recite the verse')}</strong>
-      {speaking ? <ReciteMeter pct={pct} numberFmt={numberFmt} ar={ar} /> : <span className="muted small">{ar ? 'الكلمات هتنوّر وانت بتقولها' : 'Words light up as you say them'}</span>}
+      <strong>{!listening && !speaking ? (ar ? 'ثانية…' : 'One moment…') : tasmee ? (ar ? 'سمّع الآية من حفظك' : 'Recite the verse from memory') : (ar ? 'دورك! اقرأ الآية' : 'Your turn! Recite the verse')}</strong>
+      {speaking ? <ReciteMeter pct={pct} numberFmt={numberFmt} ar={ar} /> : <span className="muted small">{tasmee ? (ar ? 'الكلمات هتظهر وانت بتقولها صح' : 'Words appear as you say them right') : (ar ? 'الكلمات هتنوّر وانت بتقولها' : 'Words light up as you say them')}</span>}
       <div className="turn-actions">
-        <button className="btn btn-soft btn-sm" onClick={onRepeat}><Icon name="replay" size={16} /> {ar ? 'اسمعها تاني' : 'Hear again'}</button>
+        {tasmee && <button className="btn btn-soft btn-sm" onClick={onHint}><Icon name="eye" size={16} /> {ar ? 'ذكّرني بالكلمة' : 'Remind me'}</button>}
+        <button className="btn btn-soft btn-sm" onClick={onRepeat}><Icon name="replay" size={16} /> {tasmee ? (ar ? 'اسمع الشيخ' : 'Hear the sheikh') : (ar ? 'اسمعها تاني' : 'Hear again')}</button>
         <button className="btn btn-ghost btn-sm" onClick={onSkip}>{ar ? 'تخطّي' : 'Skip'}</button>
       </div>
     </div>
@@ -426,6 +518,8 @@ const UNSUPPORTED = {
   en: "This browser doesn't support speech recognition, so your recitation can't be checked. Open the site in Chrome or Safari (from Messenger/Facebook: tap ⋯ → Open in browser).",
 };
 const STRICTNESS = { easy: 0.5, normal: 0.7, strict: 0.9 };
+// Tasmee: how many correct words after a missed one before it counts as a mistake (guards against mis-hearing).
+const MISTAKE_AFTER = { easy: 3, normal: 2, strict: 1 };
 const TURN_WAIT = { fast: 700, normal: 1000, slow: 1600 };
 
 function Confetti() {

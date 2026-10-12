@@ -12,7 +12,7 @@ const defaults = {
   speed: 1,
   fontScale: 1.15,
   // memorization
-  memMode: 'listen', // 'listen' = listen & repeat | 'talqeen' = the sheikh recites, you repeat after him
+  memMode: 'listen', // 'listen' = listen & repeat | 'talqeen' = the sheikh recites, you repeat after him | 'tasmee' = you recite, mistakes get corrected
   repeatVerse: 3,
   repeatRange: 1,
   autoNext: true,

@@ -65,8 +65,11 @@ function find(s, w, from) {
 const BASMALA = 'بسم لله لرحمن لرحيم';
 
 /**
- * @returns {{ matched: boolean[], coverage: number, lastMatched: boolean, skipped: number }}
+ * @returns {{ matched: boolean[], coverage: number, lastMatched: boolean, skipped: number, next: number, miss: number, after: number }}
  *   matched[i]  — word i of the verse was heard
+ *   next        — first word not heard yet (-1 when all were heard)
+ *   miss        — first word that was skipped or said wrong, i.e. not heard while a LATER word was (-1 if none)
+ *   after       — how many words were heard after `miss` (more = surer it's a real mistake)
  *   coverage    — share of the verse's letters that were heard, 0..1
  *   skipped     — leading words not required (the Basmala printed at the top of verse 1)
  */
@@ -97,5 +100,17 @@ export function matchRecitation(verseText, said, { surah, ayah } = {}) {
   }
   let last = sk.length - 1;
   while (last >= 0 && !sk[last]) last--;
-  return { matched, coverage: total ? got / total : 0, lastMatched: last >= skipped && matched[last], skipped };
+  let next = -1;
+  let miss = -1;
+  let after = 0;
+  for (let i = skipped; i < sk.length; i++) {
+    if (!sk[i]) continue;
+    if (!matched[i]) {
+      if (next < 0) next = i;
+    } else if (next >= 0) {
+      if (miss < 0) miss = next;
+      after += 1;
+    }
+  }
+  return { matched, coverage: total ? got / total : 0, lastMatched: last >= skipped && matched[last], skipped, next, miss, after };
 }

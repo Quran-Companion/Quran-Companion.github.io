@@ -8,12 +8,16 @@ export const speechSupported = Boolean(SR);
  * Listens with the browser's speech recognition (Arabic) and checks the words against the verse.
  * The turn only passes when enough of the verse was actually said (see recite.js).
  *
- * status: 'idle' | 'starting' | 'listening' | 'success' | 'retry' | 'error'
+ * status: 'idle' | 'starting' | 'listening' | 'success' | 'retry' | 'mistake' | 'error'
+ *
+ * Correction mode (onMistake given): the turn stops at the first wrong/skipped word — as soon as
+ * `mistakeAfter` later words were heard (so one mis-heard word doesn't trigger it), or when the
+ * person stops before the end of the verse. onMistake(result, wordIndex) gets where it went wrong.
  * error:  'denied' | 'network' | 'unsupported' | null
  *
  * Note: Chrome sends the audio to Google's speech service, Safari to Apple's (or on-device).
  */
-export function useReciteCheck({ threshold = 0.7, pauseMs = 1000, onSuccess } = {}) {
+export function useReciteCheck({ threshold = 0.7, pauseMs = 1000, onSuccess, onMistake, mistakeAfter = 0 } = {}) {
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null); // { matched, coverage, lastMatched }
@@ -22,7 +26,7 @@ export function useReciteCheck({ threshold = 0.7, pauseMs = 1000, onSuccess } = 
   const turn = useRef(null); // { text, ctx, finals, active, lastAt, started }
   const timer = useRef(0);
   const cfg = useRef({});
-  cfg.current = { threshold, pauseMs, onSuccess };
+  cfg.current = { threshold, pauseMs, onSuccess, onMistake, mistakeAfter };
 
   const clear = () => clearInterval(timer.current);
 
@@ -80,9 +84,16 @@ export function useReciteCheck({ threshold = 0.7, pauseMs = 1000, onSuccess } = 
       setResult(best);
       T2.best = best;
       // The whole verse is there (last word heard) → pass right away.
-      if (best.coverage >= cfg.current.threshold && best.lastMatched) {
+      if (best.coverage >= cfg.current.threshold && best.lastMatched && !(cfg.current.onMistake && best.miss >= 0)) {
         end('success');
         cfg.current.onSuccess?.(best);
+        return;
+      }
+      // Correction mode: a word was skipped or said wrong and the reciter went on past it.
+      const { onMistake: om, mistakeAfter: n } = cfg.current;
+      if (om && n > 0 && best.miss >= 0 && (best.after >= n || best.lastMatched)) {
+        end('mistake');
+        om(best, best.miss);
       }
     };
     r.onerror = (e) => {
@@ -114,10 +125,16 @@ export function useReciteCheck({ threshold = 0.7, pauseMs = 1000, onSuccess } = 
       if (!T?.active) return clear();
       const now = performance.now();
       const { threshold: thr, pauseMs: pause } = cfg.current;
-      if (T.best && T.lastAt && now - T.lastAt > pause && T.best.coverage >= thr) {
+      const om = cfg.current.onMistake;
+      if (T.best && T.lastAt && now - T.lastAt > pause && T.best.coverage >= thr && !(om && T.best.miss >= 0)) {
         const b = T.best;
         end('success');
         cfg.current.onSuccess?.(b);
+      } else if (om && T.best && T.lastAt && now - T.lastAt > pause + 1200) {
+        // Stopped before the end (forgot) or with a wrong word → show where.
+        const b = T.best;
+        end('mistake');
+        om(b, b.miss >= 0 ? b.miss : b.next);
       } else if (T.best && T.lastAt && now - T.lastAt > pause + 1800) {
         end('retry');
       } else if (now - T.started > 30000) {
