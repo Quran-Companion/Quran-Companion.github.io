@@ -36,10 +36,25 @@ async function newPage({ speech = true, settings = {} } = {}) {
     const P = HTMLMediaElement.prototype.play;
     HTMLMediaElement.prototype.play = function (...a) { if (!String(this.src).startsWith('data:')) window.__playing++; return P.apply(this, a); };
     window.__say = (text, final = true) => {
+      // Like Chrome: results accumulate within a session; a pending (interim) result is replaced.
       const r = window.__rec; if (!r || !r.on) return false;
-      const alt = { transcript: text, confidence: 0.9 }; const result = [alt]; result.isFinal = final;
-      r.onresult?.({ resultIndex: 0, results: [result] }); return true;
+      r.__res ||= [];
+      const item = Object.assign([{ transcript: text, confidence: 0.9 }], { isFinal: final });
+      const last = r.__res[r.__res.length - 1];
+      let idx;
+      if (last && !last.isFinal) { idx = r.__res.length - 1; r.__res[idx] = item; } else { idx = r.__res.length; r.__res.push(item); }
+      r.onresult?.({ resultIndex: idx, results: r.__res.slice() }); return true;
     };
+    // Chrome on Android quirk: resultIndex 0 and every final repeats everything said before it.
+    window.__androidSay = (text) => {
+      const r = window.__rec; if (!r || !r.on) return false;
+      r.__acc = r.__acc ? `${r.__acc} ${text}` : text;
+      r.__res ||= [];
+      r.__res.push(Object.assign([{ transcript: r.__acc, confidence: 0.9 }], { isFinal: true }));
+      r.onresult?.({ resultIndex: 0, results: r.__res.slice() }); return true;
+    };
+    // The browser ends the session by itself (e.g. after silence); the app must restart and keep what was said.
+    window.__endSession = () => { const r = window.__rec; if (!r) return; r.on = false; r.onend?.(); };
   }, speech, settings);
   await p.setRequestInterception(true);
   p.on('request', (r) => {
@@ -162,6 +177,76 @@ try {
   await say(r, 'الذي خلق سبع', false);
   await sleep(2500);
   check('Pausing mid-verse (forgot) → stays on the verse and keeps listening', (await verseNo(r)).includes('٣') && Boolean(await r.$('.turn-you .mic-orb.is-listening')));
+
+
+  // ===== 5. YOUR CASE: not sure → hesitate → show the verse → hide it → say it =====
+  const h = await open('/memorize/session?surah=67&from=2&to=3');
+  await h.click('.turn-idle .btn-primary');
+  await waitTurn(h);
+  await say(h, 'الذي خلق', true);
+  await say(h, 'امم مش فاكر الكلمه اللي بعدها خالص يا ربي استنى كده ثانيه واحده', true);
+  await sleep(1500);
+  check('Hesitating mid-verse does not move on', (await verseNo(h)).includes('٢'));
+  await h.click('.turn-you [data-act="verse"]'); await sleep(200);
+  await h.click('.turn-you [data-act="verse"]'); await sleep(200);
+  await say(h, 'الذي خلق الموت والحياه ليبلوكم ايكم احسن عملا', false);
+  await sleep(150);
+  w = await words(h);
+  check('After show → hide → saying it again, the words register', w.filter((x) => x.startsWith('w-ok')).length >= 8, w.map((x) => x.split(':')[0]).join(','));
+  await say(h, 'الذي خلق الموت والحياه ليبلوكم ايكم احسن عملا وهو العزيز الغفور', true);
+  await sleep(200);
+  check('…and the verse completes → next verse', (await verseNo(h)).includes('٣'), await verseNo(h));
+  w = await words(h, '.prev-card .quran-marked');
+  check('…with no red (it was all said in the end)', w.length && !w.some((x) => x.startsWith('w-bad')), w.filter((x) => !x.startsWith('w-ok')).join(' '));
+
+  // ===== 6. Carrying on from the middle after a long hesitation =====
+  await say(h, 'الذي خلق سبع سماوات', true);
+  await say(h, 'اه ايه بقى استنى انا كنت حافظها كويس جدا امبارح والله', true);
+  await say(h, 'طباقا ما ترى في خلق الرحمن من تفاوت', false);
+  await sleep(150);
+  w = await words(h);
+  check('Carrying on mid-verse after a long pause keeps counting', w.filter((x) => x.startsWith('w-ok')).length >= 10, w.map((x) => x.split(':')[0]).join(','));
+
+  // ===== 7. A pause before the last words does not end the verse =====
+  await sleep(2600);
+  check('Pausing before the end of a verse (thinking) → stays on it', (await verseNo(h)).includes('٣') && !(await h.$('.done-card')));
+
+  // ===== 8. Browser restarts the mic by itself mid-verse =====
+  const g = await open('/memorize/session?surah=112&from=3&to=4');
+  await g.click('.turn-idle .btn-primary');
+  await waitTurn(g);
+  await say(g, 'لم يلد', false);
+  await g.evaluate(() => window.__endSession());
+  await sleep(300);
+  await say(g, 'ولم يولد', true);
+  await sleep(200);
+  check('Mic restarted by the browser mid-verse → nothing lost, verse completes', (await verseNo(g)).includes('٤'), await verseNo(g));
+  w = await words(g, '.prev-card .quran-marked');
+  check('…all green', w.length === 4 && w.every((x) => x.startsWith('w-ok')), w.join(' '));
+
+  // ===== 9. Chrome-on-Android duplicate results =====
+  const a = await open('/memorize/session?surah=112&from=1&to=4');
+  await a.click('.turn-idle .btn-primary');
+  await waitTurn(a);
+  await a.evaluate(() => window.__androidSay('قل هو الله احد'));
+  await a.evaluate(() => window.__androidSay('الله الصمد'));
+  await a.evaluate(() => window.__androidSay('لم يلد ولم يولد'));
+  await sleep(200);
+  check('Android-style repeated results: follows correctly to verse 4', (await verseNo(a)).includes('٤'), await verseNo(a));
+  w = await words(a, '.prev-card .quran-marked');
+  check('…previous verse all green', w.length === 4 && w.every((x) => x.startsWith('w-ok')), w.join(' '));
+
+  // ===== 10. Two verses differing by one letter (94:5 → 94:6) =====
+  const k = await open('/memorize/session?surah=94&from=5&to=7');
+  await k.click('.turn-idle .btn-primary');
+  await waitTurn(k);
+  await say(k, 'فان مع العسر يسرا', true);
+  await sleep(150);
+  await say(k, 'ان مع العسر يسرا', true);
+  await sleep(200);
+  check('94:5 then 94:6 (almost identical) both counted', (await verseNo(k)).includes('٧'), await verseNo(k));
+  w = await words(k, '.prev-card .quran-marked');
+  check('…94:6 all green', w.length && w.every((x) => x.startsWith('w-ok')), w.join(' '));
 
   // ===== 4. Mode card =====
   await p.goto(url('/memorize'), { waitUntil: 'load' });

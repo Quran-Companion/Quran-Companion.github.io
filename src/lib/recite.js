@@ -84,7 +84,33 @@ const BASMALA = 'بسم لله لرحمن لرحيم';
  *   coverage    — share of the verse's letters that were heard, 0..1
  *   skipped     — leading words not required (the Basmala printed at the top of verse 1)
  */
-export function matchRecitation(verseText, said, { surah, ayah } = {}, { from = 0, s: pre } = {}) {
+export function matchRecitation(verseText, said, ctx = {}, opts = {}) {
+  const s = opts.s ?? saidSkeleton(said);
+  const from = opts.from || 0;
+  // People stop, hesitate, or look at the verse and start again. Try every place the verse could
+  // (re)start — where one of its first words was said — and keep the best reading, so a fresh
+  // attempt isn't tied to an earlier, broken-off one.
+  let best = matchFrom(verseText, s, ctx, from);
+  if (best.complete) return best;
+  const words = verseWords(verseText).map(skeleton);
+  const heads = [];
+  for (let i = best.skipped; i < words.length && heads.length < 3; i++) if (words[i] && words[i].length >= 2) heads.push(words[i]);
+  const starts = new Set();
+  for (const h of heads) {
+    for (let at = s.indexOf(h, from + 1); at >= 0; at = s.indexOf(h, at + 1)) starts.add(at);
+  }
+  // The most recent attempts matter most (bounded work on long transcripts).
+  const recent = [...starts].sort((a, b) => b - a).slice(0, 12);
+  for (const at of recent) {
+    if (at === best.start) continue;
+    const r = matchFrom(verseText, s, ctx, at);
+    if (r.coverage > best.coverage + 1e-9 || (r.coverage === best.coverage && r.coverage > 0 && r.start > best.start && r.next >= best.next)) best = r;
+    if (best.complete) break;
+  }
+  return best;
+}
+
+function matchFrom(verseText, s, { surah, ayah } = {}, from = 0) {
   const words = verseWords(verseText);
   const sk = words.map(skeleton);
   const matched = sk.map((w) => !w); // tokens that are only marks (e.g. ۚ ۞) count as done
@@ -94,7 +120,6 @@ export function matchRecitation(verseText, said, { surah, ayah } = {}, { from = 
     skipped = 4;
     for (let i = 0; i < 4; i++) matched[i] = true;
   }
-  const s = pre ?? saidSkeleton(said);
   let pos = from;
   let total = 0;
   let got = 0;
@@ -103,7 +128,16 @@ export function matchRecitation(verseText, said, { surah, ayah } = {}, { from = 
     const w = sk[i];
     if (!w) continue;
     total += w.length;
-    const hit = find(s, w, pos, start < 0 ? s.length : pos + GAP);
+    let hit = find(s, w, pos, start < 0 ? s.length : pos + GAP);
+    if (!hit && start >= 0) {
+      // Long pause / hesitation in the middle, then carried on from here: accept the word further
+      // ahead only if the word after it follows straight away (so a lone coincidence doesn't count).
+      const far = find(s, w, pos);
+      let k = i + 1;
+      while (k < sk.length && !sk[k]) k++;
+      const nextW = sk[k];
+      if (far && (!nextW ? false : Boolean(find(s, nextW, far[1], far[1] + 6)))) hit = far;
+    }
     if (hit) {
       matched[i] = true;
       got += w.length;

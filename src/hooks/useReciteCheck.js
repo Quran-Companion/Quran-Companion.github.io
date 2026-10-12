@@ -70,13 +70,27 @@ export function useReciteCheck({ threshold = 0.7, pauseMs = 1000, onSuccess, onM
     r.onresult = (e) => {
       const T2 = turn.current;
       if (!T2?.active) return;
+      // Rebuild this session's text from ALL its results (not just from resultIndex): Chrome on
+      // Android sometimes reports a wrong resultIndex, or sends each final again with everything
+      // said before it. Finals that just repeat/extend the previous one replace it.
+      const fin = [];
       let interim = [''];
-      for (let i = e.resultIndex; i < e.results.length; i++) {
+      for (let i = 0; i < e.results.length; i++) {
         const res = e.results[i];
-        if (res.isFinal) T2.finals.push(res[0].transcript);
-        else interim = Array.from(res).map((alt) => alt.transcript);
+        if (res.isFinal) {
+          const t = res[0].transcript.trim();
+          if (!t) continue;
+          const last = fin[fin.length - 1];
+          // (e.g. 94:5 then 94:6 differ only by «ف», so only a final that STARTS with the previous one counts as a repeat)
+          if (last && last.split(' ').length >= 2 && t.replace(/\s+/g, ' ').startsWith(last.replace(/\s+/g, ' '))) fin[fin.length - 1] = t;
+          else fin.push(t);
+        } else {
+          interim = Array.from(res).map((alt) => alt.transcript);
+        }
       }
-      const base = T2.finals.join(' ');
+      T2.session = fin.join(' ');
+      T2.pending = interim[0] || '';
+      const base = [...T2.finals, T2.session].join(' ');
       T2.lastAt = performance.now();
       if (T2.flow) { flowStep(T2, `${base} ${interim[0]}`); return; }
       const best = evaluate(interim.map((x) => `${base} ${x}`));
@@ -105,7 +119,18 @@ export function useReciteCheck({ threshold = 0.7, pauseMs = 1000, onSuccess, onM
       else if (e.error === 'language-not-supported') { setError('unsupported'); end('error'); }
     };
     // Recognition stops by itself after a pause on some devices — keep listening until the turn ends.
-    r.onend = () => { if (turn.current?.active && rec.current === r) { rec.current = null; setTimeout(listen, 60); } };
+    // What this session heard is kept (plus any last words that never became "final").
+    r.onend = () => {
+      const T3 = turn.current;
+      if (T3?.active && rec.current === r) {
+        const kept = [T3.session, T3.pending].filter(Boolean).join(' ');
+        if (kept) T3.finals.push(kept);
+        T3.session = '';
+        T3.pending = '';
+        rec.current = null;
+        setTimeout(listen, 60);
+      }
+    };
     try { r.start(); } catch (e) { console.warn('[speech] start', e); }
   }, [end]);
 
@@ -173,7 +198,7 @@ export function useReciteCheck({ threshold = 0.7, pauseMs = 1000, onSuccess, onM
     setHeard('');
     setResult(null);
     if (!SR) { setError('unsupported'); setStatus('error'); return; }
-    turn.current = { flow: true, list, base, i: 0, offset: 0, cur: null, finals: [], active: true, lastAt: 0, started: performance.now() };
+    turn.current = { flow: true, list, base, i: 0, offset: 0, cur: null, finals: [], session: '', pending: '', active: true, lastAt: 0, started: performance.now() };
     setStatus('starting');
     listen();
     timer.current = setInterval(() => {
@@ -181,8 +206,11 @@ export function useReciteCheck({ threshold = 0.7, pauseMs = 1000, onSuccess, onM
       if (!T?.active) return clear();
       const now = performance.now();
       const { threshold: thr, pauseMs: pause } = cfg.current;
-      // Paused at the end of a verse (last word heard, or most of it) → it's done.
-      if (T.cur && T.lastAt && now - T.lastAt > pause && (T.cur.lastMatched || T.cur.coverage >= Math.max(thr, 0.85))) {
+      // Paused after reaching the end of the verse → it's done. (A pause in the middle is someone
+      // thinking — wait for them; starting the next verse also finishes it.) On the very last verse,
+      // a long pause with most of it said also finishes, in case its last word was mis-heard.
+      const lastOne = T.i === T.list.length - 1;
+      if (T.cur && T.lastAt && ((now - T.lastAt > pause && T.cur.lastMatched) || (lastOne && now - T.lastAt > 4000 && T.cur.coverage >= Math.max(thr, 0.85)))) {
         const r = T.cur;
         if (finishVerse(T, r)) T.offset = r.end;
         return;
@@ -200,7 +228,7 @@ export function useReciteCheck({ threshold = 0.7, pauseMs = 1000, onSuccess, onM
     setHeard('');
     setResult(null);
     if (!SR) { setError('unsupported'); setStatus('error'); return; }
-    turn.current = { text, ctx, finals: [], active: true, lastAt: 0, started: performance.now(), best: null };
+    turn.current = { text, ctx, finals: [], session: '', pending: '', active: true, lastAt: 0, started: performance.now(), best: null };
     setStatus('starting');
     listen();
     // Decide after a pause: enough of the verse → pass; something said but not enough → "try again".

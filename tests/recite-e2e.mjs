@@ -33,10 +33,25 @@ async function newPage({ speech = true, settings = {} } = {}) {
       };
     }
     window.__say = (text, final = true) => {
+      // Like Chrome: results accumulate within a session; a pending (interim) result is replaced.
       const r = window.__rec; if (!r || !r.on) return false;
-      const alt = { transcript: text, confidence: 0.9 }; const result = [alt]; result.isFinal = final;
-      r.onresult?.({ resultIndex: 0, results: [result] }); return true;
+      r.__res ||= [];
+      const item = Object.assign([{ transcript: text, confidence: 0.9 }], { isFinal: final });
+      const last = r.__res[r.__res.length - 1];
+      let idx;
+      if (last && !last.isFinal) { idx = r.__res.length - 1; r.__res[idx] = item; } else { idx = r.__res.length; r.__res.push(item); }
+      r.onresult?.({ resultIndex: idx, results: r.__res.slice() }); return true;
     };
+    // Chrome on Android quirk: resultIndex 0 and every final repeats everything said before it.
+    window.__androidSay = (text) => {
+      const r = window.__rec; if (!r || !r.on) return false;
+      r.__acc = r.__acc ? `${r.__acc} ${text}` : text;
+      r.__res ||= [];
+      r.__res.push(Object.assign([{ transcript: r.__acc, confidence: 0.9 }], { isFinal: true }));
+      r.onresult?.({ resultIndex: 0, results: r.__res.slice() }); return true;
+    };
+    // The browser ends the session by itself (e.g. after silence); the app must restart and keep what was said.
+    window.__endSession = () => { const r = window.__rec; if (!r) return; r.on = false; r.onend?.(); };
   }, speech, settings);
   await p.setRequestInterception(true);
   p.on('request', (r) => {
