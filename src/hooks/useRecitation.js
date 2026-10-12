@@ -1,6 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { withAudio } from '../lib/reciters';
 
+// ~0.3 s of silence. Phones (and Bluetooth headsets, or right after the mic closes)
+// need a moment to wake the audio output; without this lead-in the first syllable
+// of a recording — e.g. the "ب" of the Basmala — gets swallowed.
+const SILENCE = (() => {
+  const rate = 8000, n = 2400, b = new Uint8Array(44 + n);
+  const dv = new DataView(b.buffer);
+  const str = (o, t) => [...t].forEach((c, i) => { b[o + i] = c.charCodeAt(0); });
+  str(0, 'RIFF'); dv.setUint32(4, 36 + n, true); str(8, 'WAVEfmt '); dv.setUint32(16, 16, true);
+  dv.setUint16(20, 1, true); dv.setUint16(22, 1, true); dv.setUint32(24, rate, true); dv.setUint32(28, rate, true);
+  dv.setUint16(32, 1, true); dv.setUint16(34, 8, true); str(36, 'data'); dv.setUint32(40, n, true); b.fill(128, 44);
+  let bin = ''; b.forEach((x) => { bin += String.fromCharCode(x); });
+  return `data:audio/wav;base64,${btoa(bin)}`;
+})();
+
 /**
  * Verse-by-verse recitation player.
  *
@@ -28,7 +42,9 @@ export function useRecitation({
   const wantPlay = useRef(false);
   const counts = useRef({ verse: 0, range: 0 });
   const altIndex = useRef(0); // which backup URL we are on for the current verse
-  const stage = useRef('main'); // 'intro' while the Basmala plays before verse 1, then 'main'
+  const stage = useRef('main'); // 'lead' (silence) → 'intro' (Basmala before verse 1) → 'main'
+  const pending = useRef('main'); // the stage that follows the silent lead-in
+  const lastEnded = useRef(-Infinity); // when a clip last finished — tells continuous playback from a cold start
   const [playing, setPlaying] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -51,8 +67,16 @@ export function useRecitation({
     if (!a || !v?.audio) return;
     altIndex.current = 0;
     setError(null);
-    const first = v.intro || v.audio;
+    let first = v.intro || v.audio;
     stage.current = v.intro ? 'intro' : 'main';
+    // Starting from silence (not straight after the previous clip): lead in with a short silence.
+    const cold = a.paused && performance.now() - lastEnded.current > 1000;
+    if (autoplay && cold) {
+      pending.current = stage.current;
+      stage.current = 'lead';
+      const warm = new Audio(); warm.preload = 'auto'; warm.src = first; // buffer the real file meanwhile
+      first = SILENCE;
+    }
     if (a.src !== first) {
       a.src = first;
       setLoading(true);
@@ -64,7 +88,8 @@ export function useRecitation({
         if (e.name !== 'AbortError') { setError('audio'); wantPlay.current = false; setPlaying(false); }
       });
     }
-    // Warm the cache for the next verse.
+    // Warm the cache: the verse itself (it follows the Basmala) and the next verse.
+    if (v.intro) { const w = new Audio(); w.preload = 'auto'; w.src = v.audio; }
     const next = live.current.verses?.[i + 1];
     if (next?.audio) { const p = new Audio(); p.preload = 'auto'; p.src = next.audio; }
   }, []);
@@ -79,6 +104,7 @@ export function useRecitation({
     const onWaiting = () => setLoading(true);
     const onError = () => {
       const v = live.current.verses?.[live.current.index];
+      if (stage.current === 'lead') { startPending(v); return; }
       // Basmala failed: try its backups, else go straight to the verse.
       if (stage.current === 'intro') {
         const alt = v?.introAlts?.[altIndex.current];
@@ -102,8 +128,18 @@ export function useRecitation({
       setError('audio');
       wantPlay.current = false;
     };
+    const startPending = (v) => {
+      stage.current = pending.current;
+      const src = stage.current === 'intro' ? v?.intro : v?.audio;
+      if (!src) return;
+      a.src = src;
+      if (wantPlay.current) a.play().catch(() => {});
+    };
     const onEnded = () => {
       const L = live.current;
+      lastEnded.current = performance.now();
+      // Silent lead-in done → the real recording.
+      if (stage.current === 'lead') { startPending(L.verses?.[L.index]); return; }
       // Basmala done → the verse itself (not counted as a repeat).
       if (stage.current === 'intro') {
         const v = L.verses?.[L.index];
@@ -188,7 +224,8 @@ export function useRecitation({
     if (!a) return;
     wantPlay.current = true;
     setError(null);
-    if (!a.src) load(live.current.index, true);
+    // Not started yet (or at the very start) → load, which adds the lead-in.
+    if (!a.src || stage.current === 'lead' || a.currentTime === 0) load(live.current.index, true);
     else a.play().catch((e) => e.name !== 'AbortError' && setError('audio'));
   }, [load]);
 

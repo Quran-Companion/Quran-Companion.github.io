@@ -31,7 +31,7 @@ async function run(surah, to, settings, failIntro = false) {
   });
   // Record which files actually start PLAYING (not just preloads).
   await p.exposeFunction('__played', (src) => played.push('PLAY:' + src.split('/').slice(-2).join('/')));
-  await p.evaluateOnNewDocument(() => { const A = window.Audio; window.Audio = function (...a) { const el = new A(...a); el.addEventListener('playing', () => window.__played(el.currentSrc)); return el; }; window.Audio.prototype = A.prototype; });
+  await p.evaluateOnNewDocument(() => { const A = window.Audio; window.Audio = function (...a) { const el = new A(...a); el.addEventListener('playing', () => window.__played(el.currentSrc.startsWith('data:') ? 'x/SILENCE' : el.currentSrc)); return el; }; window.Audio.prototype = A.prototype; });
   const url = `${base}#/memorize/session?surah=${surah}&from=1&to=${to}`;
   await p.goto(url, { waitUntil: 'load' }); await p.reload({ waitUntil: 'load' });
   await p.waitForSelector('.play-btn'); await sleep(300);
@@ -40,14 +40,18 @@ async function run(surah, to, settings, failIntro = false) {
   await p.close();
   return played.filter((x) => x.startsWith('PLAY:') || x.startsWith('FAIL:')).map((x) => x.replace(/^PLAY:[^/]+\//, '').replace(/^FAIL:[^/]+\//, 'FAIL '));
 }
-let o = await run(112, 2, { memMode: 'listen', repeatVerse: 1, autoNext: true });
-check('Al-Ikhlas: Basmala (001001) then verse 1, then verse 2', o.slice(0, 3).join(' → ') === '001001.mp3 → 112001.mp3 → 112002.mp3', o.join(' → '));
+let o = await run(112, 1, { memMode: 'listen', repeatVerse: 1, autoNext: true, reciter: 'alafasy' });
+check('Alafasy: short silence first, then the full Basmala, then the verse', o.slice(0, 3).join(' → ') === 'SILENCE → 001001.mp3 → 112001.mp3', o.join(' → '));
+o = await run(112, 3, { memMode: 'listen', repeatVerse: 1, autoNext: true });
+check('Silence only at the start, not between verses', o.filter((x) => x === 'SILENCE').length === 1, o.join(' → '));
+o = await run(112, 2, { memMode: 'listen', repeatVerse: 1, autoNext: true });
+check('Al-Ikhlas: Basmala (001001) then verse 1, then verse 2', o.filter((x)=>x!=='SILENCE').slice(0, 3).join(' → ') === '001001.mp3 → 112001.mp3 → 112002.mp3', o.join(' → '));
 o = await run(112, 1, { memMode: 'listen', repeatVerse: 3, autoNext: true });
-check('Repeating verse 1 ×3: Basmala only the first time', o.join(' → ') === '001001.mp3 → 112001.mp3 → 112001.mp3 → 112001.mp3', o.join(' → '));
+check('Repeating verse 1 ×3: Basmala only the first time', o.filter((x)=>x!=='SILENCE').join(' → ') === '001001.mp3 → 112001.mp3 → 112001.mp3 → 112001.mp3', o.join(' → '));
 o = await run(1, 2, { memMode: 'listen', repeatVerse: 1, autoNext: true });
-check('Al-Fatiha: verse 1 IS the Basmala, not played twice', o.slice(0, 2).join(' → ') === '001001.mp3 → 001002.mp3', o.join(' → '));
+check('Al-Fatiha: verse 1 IS the Basmala, not played twice', o.filter((x)=>x!=='SILENCE').slice(0, 2).join(' → ') === '001001.mp3 → 001002.mp3', o.join(' → '));
 o = await run(9, 1, { memMode: 'listen', repeatVerse: 1, autoNext: true });
-check('At-Tawbah: no Basmala', o[0] === '009001.mp3', o.join(' → '));
+check('At-Tawbah: no Basmala', o.filter((x)=>x!=='SILENCE')[0] === '009001.mp3', o.join(' → '));
 o = await run(112, 1, { memMode: 'listen', repeatVerse: 1, autoNext: true }, true);
 check('If the Basmala file fails, the verse still plays', o.includes('112001.mp3'), o.join(' → '));
 console.log(`\n${res.filter(Boolean).length}/${res.length} passed`);
