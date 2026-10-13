@@ -52,19 +52,39 @@ const allowedErrors = (len) => (len <= 3 ? 0 : len <= 6 ? 1 : 2);
 const GAP = 40;
 
 /** Find word `w` in `s` from `from` up to `until` (exact first, then approximate). Returns [start, end] or null. */
-function find(s, w, from, until = s.length) {
+// Fuzzy comparisons are cached per transcript (the same spots get compared again and again).
+let memoFor = null;
+let memo = new Map();
+function near(s, j, L, w, max) {
+  if (memoFor !== s) { memoFor = s; memo = new Map(); }
+  const key = `${w}|${j}|${L}`;
+  let d = memo.get(key);
+  if (d === undefined) { d = lev(s.slice(j, j + L), w, max); memo.set(key, d); }
+  return d <= max;
+}
+
+function find(s, w, from, until = s.length, approx = true) {
   let exact = s.indexOf(w, from);
   if (exact >= 0 && exact > until) exact = -1;
-  const max = allowedErrors(w.length);
+  const max = approx ? allowedErrors(w.length) : 0;
   if (max === 0) return exact >= 0 ? [exact, exact + w.length] : null;
   const limit = exact >= 0 ? exact : Math.min(s.length, until + 1);
   for (let j = from; j < limit; j++) {
+    // A near match starts with (about) the same letter — skip spots that can't be one.
+    const c = s[j];
+    if (c !== w[0] && c !== w[1] && s[j + 1] !== w[0]) continue;
     for (let L = w.length - max; L <= w.length + max; L++) {
       if (L <= 0 || j + L > s.length) continue;
-      if (lev(s.slice(j, j + L), w, max) <= max) return [j, j + L];
+      if (near(s, j, L, w, max)) return [j, j + L];
     }
   }
   return exact >= 0 ? [exact, exact + w.length] : null;
+}
+
+/** Was this verse word said (exactly or nearly) in `s` from `from` on? Returns [start, end] or null. */
+export function findWord(s, word, from = 0, until = s.length) {
+  const w = skeleton(word);
+  return w ? find(s, w, from, until) : null;
 }
 
 /** The transcript as one string of letters (what positions below refer to). */
@@ -94,13 +114,14 @@ export function matchRecitation(verseText, said, ctx = {}, opts = {}) {
   if (best.complete) return best;
   const words = verseWords(verseText).map(skeleton);
   const heads = [];
-  for (let i = best.skipped; i < words.length && heads.length < 3; i++) if (words[i] && words[i].length >= 2) heads.push(words[i]);
+  // Restart points: the first distinctive words (short ones like «له» occur everywhere in speech).
+  for (let i = best.skipped; i < words.length && heads.length < 2; i++) if (words[i] && words[i].length >= 3) heads.push(words[i]);
   const starts = new Set();
   for (const h of heads) {
     for (let at = s.indexOf(h, from + 1); at >= 0; at = s.indexOf(h, at + 1)) starts.add(at);
   }
   // The most recent attempts matter most (bounded work on long transcripts).
-  const recent = [...starts].sort((a, b) => b - a).slice(0, 12);
+  const recent = [...starts].sort((a, b) => b - a).slice(0, 6);
   for (const at of recent) {
     if (at === best.start) continue;
     const r = matchFrom(verseText, s, ctx, at);
@@ -124,15 +145,17 @@ function matchFrom(verseText, s, { surah, ayah } = {}, from = 0) {
   let total = 0;
   let got = 0;
   let start = -1;
+  const at = []; // [start, end] of each heard word
   for (let i = skipped; i < sk.length; i++) {
     const w = sk[i];
     if (!w) continue;
     total += w.length;
-    let hit = find(s, w, pos, start < 0 ? s.length : pos + GAP);
+    // Fuzzy search is costly: over the whole transcript only for the verse's first words.
+    let hit = start < 0 ? find(s, w, pos, s.length, i < skipped + 4) : find(s, w, pos, pos + GAP);
     if (!hit && start >= 0) {
       // Long pause / hesitation in the middle, then carried on from here: accept the word further
       // ahead only if the word after it follows straight away (so a lone coincidence doesn't count).
-      const far = find(s, w, pos);
+      const far = find(s, w, pos, s.length, false);
       let k = i + 1;
       while (k < sk.length && !sk[k]) k++;
       const nextW = sk[k];
@@ -140,9 +163,25 @@ function matchFrom(verseText, s, { surah, ayah } = {}, from = 0) {
     }
     if (hit) {
       matched[i] = true;
+      at[i] = hit;
       got += w.length;
       if (start < 0) start = hit[0];
       pos = hit[1];
+    }
+  }
+  // Fill gaps: a word not found may still have been said between its neighbours, after a long
+  // hesitation there (cheap — only that stretch of the transcript is searched).
+  if (start >= 0) {
+    let prevEnd = -1;
+    for (let i = skipped; i < sk.length; i++) {
+      if (!sk[i]) continue;
+      if (matched[i]) { prevEnd = at[i][1]; continue; }
+      if (prevEnd < 0) continue;
+      let k = i + 1;
+      while (k < sk.length && !matched[k]) k++;
+      if (k >= sk.length) break; // nothing heard after it — not a gap
+      const hit = find(s, sk[i], prevEnd, at[k][0] - sk[i].length + 2);
+      if (hit && hit[1] <= at[k][0] + 1) { matched[i] = true; at[i] = hit; got += sk[i].length; prevEnd = hit[1]; }
     }
   }
   let last = sk.length - 1;

@@ -82,7 +82,7 @@ export default function MemorizeSession() {
       const v = versesRef.current[i];
       if (!v) return;
       const shown = hintsRef.current[v.key] || new Set();
-      const marks = r.matched.map((m, w) => (!r.real[w] ? true : m ? (shown.has(w) ? 'hint' : true) : 'bad'));
+      const marks = r.matched.map((m, w) => (!r.real[w] ? true : m === 'bad' ? 'bad' : shown.has(w) ? 'hint' : m ? true : 'bad'));
       setRecited((x) => ({ ...x, [v.key]: marks }));
       if (i + 1 < versesRef.current.length) {
         indexRef.current = i + 1;
@@ -333,6 +333,7 @@ export default function MemorizeSession() {
             peek={peek}
             onHint={giveHint}
             onShowVerse={showVerse}
+            onSkipVerse={() => { markHelped(); checkRef.current.skipVerse(); }}
             phase={phase}
             check={check}
             playing={player.playing}
@@ -424,13 +425,13 @@ export default function MemorizeSession() {
 }
 
 /** The "sheikh / your turn" panel for talqeen mode. */
-function TurnPanel({ ar, tasmee, peek, phase, check, playing, numberFmt, onStart, onSkip, onRepeat, onRetry, onHint, onShowVerse }) {
+function TurnPanel({ ar, tasmee, peek, phase, check, playing, numberFmt, onStart, onSkip, onRepeat, onRetry, onHint, onShowVerse, onSkipVerse }) {
   const pct = Math.round((check.result?.coverage || 0) * 100);
   if (phase === null) {
     return (
       <div className="turn-panel turn-idle">
         <p>{tasmee
-          ? (ar ? 'اقرأ من حفظك على طول والميك مفتوح، والبرنامج ماشي معاك آية آية. اللي تغلط فيه أو يفوتك بيتعلّم بالأحمر من غير ما يوقّفك. ولو نسيت، اضغط «اظهر كلمة» أو «اظهر الآية».' : 'Recite from memory without stopping; it follows you verse by verse. Anything wrong or missed is marked red — it never stops you. Forgot? Tap "Show a word" or "Show the verse".')
+          ? (ar ? 'اقرأ من حفظك والميك مفتوح. مش هتنتقل للآية اللي بعدها غير لما تقول الآية كلها. الكلمة اللي تفوتها أو تغلط فيها بتنوّر بالأحمر لحد ما تقولها صح. ولو نسيت، اضغط «اظهر كلمة» أو «اظهر الآية».' : 'Recite from memory with the mic on. You move to the next verse only after saying the whole verse. A word you skip or get wrong turns red until you say it. Forgot? Tap "Show a word" or "Show the verse".')
           : (ar ? 'الشيخ يقرأ الآية، ثم تقرأها أنت وراءه. لن ينتقل للآية التالية إلا عندما تقولها صحيحة.' : 'The sheikh recites, then you repeat. It moves on only when you say the verse correctly.')}</p>
         <button className="btn btn-primary btn-lg" onClick={onStart}><Icon name="mic" /> {tasmee ? (ar ? 'ابدأ التسميع' : 'Start reciting') : (ar ? 'ابدأ التلقين' : 'Start')}</button>
         {!speechSupported && <p className="muted small">{UNSUPPORTED[ar ? 'ar' : 'en']}</p>}
@@ -521,15 +522,16 @@ function TurnPanel({ ar, tasmee, peek, phase, check, playing, numberFmt, onStart
         <span className="mic-ring r2" />
         <Icon name="mic" size={30} />
       </span>
-      <strong>{!listening && !speaking ? (ar ? 'ثانية…' : 'One moment…') : tasmee ? (ar ? 'سمّع من حفظك… كمّل على طول' : 'Recite from memory… keep going') : (ar ? 'دورك! اقرأ الآية' : 'Your turn! Recite the verse')}</strong>
+      <strong>{!listening && !speaking ? (ar ? 'ثانية…' : 'One moment…') : tasmee ? (ar ? 'سمّع الآية من حفظك' : 'Recite the verse from memory') : (ar ? 'دورك! اقرأ الآية' : 'Your turn! Recite the verse')}</strong>
       {tasmee
-        ? <span className="muted small">{ar ? 'الكلمات بتظهر وانت بتقولها، واللي يفوتك بيتعلّم بالأحمر' : 'Words appear as you say them; anything missed turns red'}</span>
+        ? <span className="muted small">{ar ? 'قول الآية كلها — الكلمة اللي تفوتك بتنوّر بالأحمر لحد ما تقولها' : 'Say the whole verse — a skipped word stays red until you say it'}</span>
         : speaking ? <ReciteMeter pct={pct} numberFmt={numberFmt} ar={ar} /> : <span className="muted small">{ar ? 'الكلمات هتنوّر وانت بتقولها' : 'Words light up as you say them'}</span>}
       <div className="turn-actions">
         {tasmee ? (
           <>
             <button className="btn btn-soft btn-sm" onClick={onHint} data-act="word"><Icon name="eye" size={16} /> {ar ? 'اظهر كلمة' : 'Show a word'}</button>
             <button className={`btn btn-sm ${peek ? 'btn-primary' : 'btn-soft'}`} onClick={onShowVerse} data-act="verse"><Icon name={peek ? 'eyeOff' : 'book'} size={16} /> {peek ? (ar ? 'اخفِ الآية' : 'Hide the verse') : (ar ? 'اظهر الآية' : 'Show the verse')}</button>
+            <button className="btn btn-ghost btn-sm" onClick={onSkipVerse} data-act="skip">{ar ? 'تخطّي الآية' : 'Skip verse'}</button>
           </>
         ) : (
           <>
