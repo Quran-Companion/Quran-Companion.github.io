@@ -28,7 +28,7 @@ export function QuranText({ text, ayah, size = 'md', hidden = false, onReveal, r
           if (!tok.trim()) return tok;
           w++;
           const m = marks[w];
-          return <span key={i} className={m === 'bad' ? 'w-bad' : m === 'hint' ? 'w-hint' : m ? 'w-ok' : 'w-todo'}>{tok}</span>;
+          return <span key={i} className={m === 'bad' ? 'w-bad' : m === 'hint' ? 'w-hint' : m === 'dim' ? 'w-dim' : m ? 'w-ok' : 'w-todo'}>{tok}</span>;
         })}
         {ayah != null && <> <AyahNumber n={ayah} /></>}
       </p>

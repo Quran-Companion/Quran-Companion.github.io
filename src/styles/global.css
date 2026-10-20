@@ -787,3 +787,8 @@ a.chip:hover { border-color: var(--primary); }
 .recited-row { display: grid; gap: 6px; justify-items: start; padding: 10px 14px; border-radius: 16px; border: 1px solid var(--border); background: var(--bg); }
 .recited-row.has-bad { border-color: var(--danger); background: var(--danger-soft); }
 .recited-row .quran { margin: 0; width: 100%; }
+
+/* Talqeen: long verses part by part */
+.quran-marked .w-dim { opacity: 0.28; transition: opacity 0.3s; }
+.quran-marked.is-masked .w-dim { color: transparent; background: var(--surface-2); border-radius: 10px; opacity: 0.5; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.part-badge { font-weight: 700; }

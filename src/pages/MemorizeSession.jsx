@@ -12,8 +12,9 @@ import { QuranText, toArabicDigits } from '../components/Verse';
 import { Transport } from '../components/AudioControls';
 import SettingsSheet, { LOOP } from '../components/SettingsSheet';
 import { ProgressBar } from '../components/ProgressRing';
-import { resolveReciter } from '../lib/reciters';
-import { matchRecitation } from '../lib/recite';
+import { resolveReciter, withAudio } from '../lib/reciters';
+import { matchRecitation, verseWords } from '../lib/recite';
+import { splitVerse, partText, analyzeAudio, partTimes } from '../lib/verseParts';
 import Icon from '../components/Icon';
 
 export default function MemorizeSession() {
@@ -21,6 +22,7 @@ export default function MemorizeSession() {
   const navigate = useNavigate();
   const S = useSettings();
   const { t, lang, reciter, speed, numberFmt, memMode, repeatVerse, repeatRange, autoNext, hideOnTurn, turnWait, reciteStrict } = S;
+  const talqeenSplit = S.talqeenSplit || 'auto';
   const ar = lang === 'ar';
   const talqeen = memMode === 'talqeen';
   const tasmee = memMode === 'tasmee'; // you recite from memory without stopping; mistakes are marked red as you go
@@ -65,6 +67,37 @@ export default function MemorizeSession() {
 
   const playerRef = useRef(null);
 
+  // ---- Talqeen: long verses go part by part (the sheikh says a part, you repeat it) ----
+  const [part, setPart] = useState(0);
+  const partRef = useRef(0);
+  const splitRef = useRef(talqeenSplit);
+  splitRef.current = talqeenSplit;
+  const reciterRef = useRef(reciter);
+  reciterRef.current = reciter;
+  const sayToken = useRef(0);
+  const phaseRef = useRef(null);
+  const partsCache = useRef(new Map());
+  const timesCache = useRef(new Map());
+  const partsOf = useCallback((v) => {
+    const key = `${v.key}|${splitRef.current}`;
+    if (!partsCache.current.has(key)) partsCache.current.set(key, splitVerse(v.text, { surah: v.surah, ayah: v.ayah }, splitRef.current));
+    return partsCache.current.get(key);
+  }, []);
+  // Where each part starts/ends in this reciter's recording (found from his pauses, else estimated).
+  const timesOf = useCallback((v, ps) => {
+    const key = `${reciterRef.current}|${v.key}|${splitRef.current}`;
+    if (!timesCache.current.has(key)) {
+      timesCache.current.set(key, (async () => {
+        const a = withAudio([v], reciterRef.current)[0];
+        for (const url of [a.audio, ...(a.audioAlts || [])]) {
+          try { const an = await analyzeAudio(url); return partTimes(ps, an).map((x) => ({ ...x, url: an.local || url })); } catch { /* try the next source */ }
+        }
+        return partTimes(ps, null);
+      })());
+    }
+    return timesCache.current.get(key);
+  }, []);
+
   // ---- "your turn": speech recognition checks the recited words against the verse ----
   const mic = useVoiceTurn(); // only used to ask for microphone permission up front
   const micRef = useRef(mic);
@@ -100,28 +133,48 @@ export default function MemorizeSession() {
   const advanceAfterTurn = () => {
     const i = indexRef.current;
     checkRef.current.stop();
-    if (i >= verses.length - 1) {
-      setPhase(null);
-      setFinished(true);
-      return;
-    }
+    if (tasmee && i >= verses.length - 1) { setPhase(null); setFinished(true); return; }
     if (tasmee) { // no speech recognition: you check yourself and move on
       indexRef.current = i + 1;
       setIndex(i + 1);
       setPhase('manual');
       return;
     }
-    setPhase('sheikh');
-    playerRef.current.playAt(i + 1);
+    // Next part of this verse, or the next verse.
+    const v = versesRef.current[i];
+    if (v && partRef.current < partsOf(v).length - 1) { sheikhSay(i, partRef.current + 1); return; }
+    if (i >= verses.length - 1) { setPhase(null); setFinished(true); return; }
+    sheikhSay(i + 1, 0);
   };
+
+  // The sheikh recites verse i (or just part p of it, for long verses).
+  const sheikhSay = useCallback(async (i, p = 0) => {
+    const v = versesRef.current[i];
+    if (!v) return;
+    const ps = partsOf(v);
+    partRef.current = p;
+    setPart(p);
+    setPhase('sheikh');
+    phaseRef.current = 'sheikh';
+    const token = ++sayToken.current;
+    if (ps.length <= 1) { playerRef.current.playAt(i); return; }
+    if (indexRef.current !== i) { indexRef.current = i; setIndex(i); }
+    const times = await timesOf(v, ps);
+    if (token !== sayToken.current || phaseRef.current === null) return; // stopped meanwhile
+    playerRef.current.playRange(i, times[p], () => startYourTurn());
+  }, [partsOf, timesOf]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Called the moment the sheikh's audio ends (or right away in tasmee).
   const startYourTurn = useCallback((at) => {
     const v = versesRef.current[at ?? indexRef.current];
     if (!speechSupported || checkRef.current.error === 'denied' || !v) { setPhase('manual'); return; }
     setPhase('you');
-    checkRef.current.start(v.text, { surah: v.surah, ayah: v.ayah });
-  }, []);
+    // In talqeen only the part the sheikh just said is checked.
+    const ps = memModeRef.current === 'talqeen' ? partsOf(v) : null;
+    const pt = ps && ps.length > 1 ? ps[partRef.current] || ps[0] : null;
+    if (pt) checkRef.current.start(partText(v.text, pt), pt.from === 0 ? { surah: v.surah, ayah: v.ayah } : {});
+    else checkRef.current.start(v.text, { surah: v.surah, ayah: v.ayah });
+  }, [partsOf]);
 
   // Tasmee: listen continuously from the current verse to the end of the range.
   const startFlow = useCallback(() => {
@@ -175,6 +228,8 @@ export default function MemorizeSession() {
   playerRef.current = player;
 
   const stopTalqeen = useCallback(() => {
+    sayToken.current += 1;
+    phaseRef.current = null;
     clearTimeout(passTimer.current);
     checkRef.current.stop();
     micRef.current.release();
@@ -189,9 +244,8 @@ export default function MemorizeSession() {
     // Ask for the microphone now (so no prompt interrupts later), then free it for speech recognition.
     if (speechSupported) { await micRef.current.prepare(); micRef.current.release(); }
     if (memModeRef.current === 'tasmee') { startFlow(); return; }
-    setPhase('sheikh');
-    playerRef.current.playAt(indexRef.current);
-  }, [startFlow]);
+    sheikhSay(indexRef.current, 0);
+  }, [startFlow, sheikhSay]);
   const memModeRef = useRef(memMode);
   memModeRef.current = memMode;
 
@@ -208,6 +262,9 @@ export default function MemorizeSession() {
   }, [current?.key]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { setPeek(false); }, [index, phase]);
+  useEffect(() => { phaseRef.current = phase; }, [phase]);
+  // Another verse (or a different split setting / reciter) → start from its first part.
+  useEffect(() => { if (phaseRef.current !== 'sheikh') { partRef.current = 0; setPart(0); } }, [current?.key, talqeenSplit]);
 
   const go = useCallback((delta) => {
     player.resetCounts();
@@ -226,7 +283,7 @@ export default function MemorizeSession() {
           if (talqeenActive) { player.pause(); stopTalqeen(); }
           else startTalqeen();
         },
-        replay: () => { if (tasmee) return; clearTimeout(passTimer.current); checkRef.current.stop(); setPhase('sheikh'); player.playAt(index); },
+        replay: () => { if (tasmee) return; clearTimeout(passTimer.current); checkRef.current.stop(); sheikhSay(index, partRef.current); },
       }
     : player;
 
@@ -256,6 +313,24 @@ export default function MemorizeSession() {
     marks = [...marks];
     hints.forEach((w) => { if (!marks[w]) marks[w] = 'hint'; });
   }
+  // Talqeen with a long verse: words before this part done, this part active, later parts faded.
+  const curParts = talqeen && current ? partsOf(current) : null;
+  const split = curParts && curParts.length > 1 && phase !== null && phase !== 'prepare' && phase !== 'manual';
+  if (split) {
+    const P = curParts[Math.min(part, curParts.length - 1)];
+    const sub = checking ? (check.result?.matched || []) : [];
+    marks = verseWords(current.text).map((_, k) => (k < P.from ? true : k >= P.to ? 'dim' : checking ? (sub[k - P.from] || false) : false));
+  }
+  const partInfo = curParts && curParts.length > 1 ? { n: curParts.length, p: Math.min(part, curParts.length - 1) } : null;
+  // Keep the part being recited in view (a long verse is taller than the space above the panel).
+  useEffect(() => {
+    if (!split) return;
+    const id = requestAnimationFrame(() => {
+      const el = document.querySelector('.stage-card .quran-marked > span:not(.w-ok):not(.ayah-num)');
+      el?.scrollIntoView?.({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [split, part, index]);
   const isBad = (k) => (recited[k] || []).includes('bad');
   const cleanKeys = verses.filter((v) => recited[v.key] && !isBad(v.key)).map((v) => v.key);
   const badCount = verses.filter((v) => isBad(v.key)).length;
@@ -330,6 +405,7 @@ export default function MemorizeSession() {
           <TurnPanel
             ar={ar}
             tasmee={tasmee}
+            partInfo={partInfo}
             peek={peek}
             onHint={giveHint}
             onShowVerse={showVerse}
@@ -425,8 +501,11 @@ export default function MemorizeSession() {
 }
 
 /** The "sheikh / your turn" panel for talqeen mode. */
-function TurnPanel({ ar, tasmee, peek, phase, check, playing, numberFmt, onStart, onSkip, onRepeat, onRetry, onHint, onShowVerse, onSkipVerse }) {
+function TurnPanel({ ar, tasmee, partInfo, peek, phase, check, playing, numberFmt, onStart, onSkip, onRepeat, onRetry, onHint, onShowVerse, onSkipVerse }) {
   const pct = Math.round((check.result?.coverage || 0) * 100);
+  const partBadge = partInfo && (
+    <span className="badge badge-soft part-badge">{ar ? `الجزء ${numberFmt(partInfo.p + 1)} من ${numberFmt(partInfo.n)}` : `Part ${partInfo.p + 1} of ${partInfo.n}`}</span>
+  );
   if (phase === null) {
     return (
       <div className="turn-panel turn-idle">
@@ -451,6 +530,7 @@ function TurnPanel({ ar, tasmee, peek, phase, check, playing, numberFmt, onStart
     return (
       <div className="turn-panel turn-sheikh">
         <span className="turn-icon"><Icon name="headphones" size={26} /></span>
+        {partBadge}
         <strong>{ar ? 'استمع للشيخ…' : 'Listen to the sheikh…'}</strong>
         <span className="muted small turn-next">
           {playing ? <><Icon name="mic" size={14} /> {ar ? 'دورك أول ما يسكت الشيخ' : 'Your turn as soon as he stops'}</> : (ar ? 'جارٍ التحميل…' : 'Loading…')}
@@ -522,7 +602,8 @@ function TurnPanel({ ar, tasmee, peek, phase, check, playing, numberFmt, onStart
         <span className="mic-ring r2" />
         <Icon name="mic" size={30} />
       </span>
-      <strong>{!listening && !speaking ? (ar ? 'ثانية…' : 'One moment…') : tasmee ? (ar ? 'سمّع الآية من حفظك' : 'Recite the verse from memory') : (ar ? 'دورك! اقرأ الآية' : 'Your turn! Recite the verse')}</strong>
+      {partBadge}
+      <strong>{!listening && !speaking ? (ar ? 'ثانية…' : 'One moment…') : tasmee ? (ar ? 'سمّع الآية من حفظك' : 'Recite the verse from memory') : partInfo ? (ar ? 'دورك! ردّد الجزء ده' : 'Your turn! Repeat this part') : (ar ? 'دورك! اقرأ الآية' : 'Your turn! Recite the verse')}</strong>
       {tasmee
         ? <span className="muted small">{ar ? 'قول الآية كلها — الكلمة اللي تفوتك بتنوّر بالأحمر لحد ما تقولها' : 'Say the whole verse — a skipped word stays red until you say it'}</span>
         : speaking ? <ReciteMeter pct={pct} numberFmt={numberFmt} ar={ar} /> : <span className="muted small">{ar ? 'الكلمات هتنوّر وانت بتقولها' : 'Words light up as you say them'}</span>}

@@ -107,6 +107,17 @@ export default function SettingsSheet({ open, onClose, sections = ['audio', 'mem
                     format={(v) => ({ fast: ar ? 'بسرعة' : 'Short', normal: ar ? 'عادي' : 'Normal', slow: ar ? 'أطول' : 'Longer' })[v]}
                   />
                 </div>
+                {s.memMode === 'talqeen' && (
+                  <div className="set-row">
+                    <span>{ar ? 'الآيات الطويلة' : 'Long verses'}</span>
+                    <Pills
+                      value={s.talqeenSplit || 'auto'}
+                      options={['auto', 'short', 'off']}
+                      onChange={(v) => s.update({ talqeenSplit: v })}
+                      format={(v) => ({ auto: ar ? 'قسّمها' : 'In parts', short: ar ? 'أجزاء أصغر' : 'Smaller parts', off: ar ? 'كاملة' : 'Whole' })[v]}
+                    />
+                  </div>
+                )}
                 {s.memMode === 'talqeen' && <label className="switch">
                   <input type="checkbox" checked={s.hideOnTurn} onChange={(e) => s.update({ hideOnTurn: e.target.checked })} />
                   <span className="switch-track" /> {ar ? 'إخفاء الآية وقت دوري (اختبار نفسي)' : 'Hide the verse on my turn (test myself)'}

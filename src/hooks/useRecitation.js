@@ -45,6 +45,8 @@ export function useRecitation({
   const stage = useRef('main'); // 'lead' (silence) → 'intro' (Basmala before verse 1) → 'main'
   const pending = useRef('main'); // the stage that follows the silent lead-in
   const lastEnded = useRef(-Infinity); // when a clip last finished — tells continuous playback from a cold start
+  // Playing only part of a verse: { i, start, end, frac, url, onEnd } (seconds, or fractions of the file)
+  const range = useRef(null);
   const [playing, setPlaying] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -67,8 +69,12 @@ export function useRecitation({
     if (!a || !v?.audio) return;
     altIndex.current = 0;
     setError(null);
-    let first = v.intro || v.audio;
-    stage.current = v.intro ? 'intro' : 'main';
+    const rg = range.current?.i === i ? range.current : null;
+    const main = rg?.url || v.audio;
+    // The Basmala goes before the start of verse 1 only (not before its later parts).
+    const intro = v.intro && (!rg || rg.start === 0) ? v.intro : null;
+    let first = intro || main;
+    stage.current = intro ? 'intro' : 'main';
     // Starting from silence (not straight after the previous clip): lead in with a short silence.
     const cold = a.paused && performance.now() - lastEnded.current > 1000;
     if (autoplay && cold) {
@@ -83,7 +89,9 @@ export function useRecitation({
     } else {
       a.currentTime = 0;
     }
-    if (autoplay) {
+    if (stage.current === 'main' && rg?.start > 0) {
+      if (autoplay) seekTo(a, rg);
+    } else if (autoplay) {
       a.play().catch((e) => {
         if (e.name !== 'AbortError') { setError('audio'); wantPlay.current = false; setPlaying(false); }
       });
@@ -93,6 +101,38 @@ export function useRecitation({
     const next = live.current.verses?.[i + 1];
     if (next?.audio) { const p = new Audio(); p.preload = 'auto'; p.src = next.audio; }
   }, []);
+
+  // Jump to the start of a part, then play. The jump only "takes" once enough of the file is known
+  // (some servers can't serve the middle of a file, so it may have to wait for the whole download) —
+  // playback starts only after it took, so the beginning of the verse is never heard by mistake.
+  const seekTo = (a, rg) => {
+    const target = () => (rg.frac ? rg.start * (a.duration || 0) : rg.start);
+    if (!(rg.start > 0)) { if (wantPlay.current) a.play().catch(() => {}); return; }
+    const evs = ['loadedmetadata', 'canplay', 'canplaythrough', 'progress', 'seeked'];
+    // Never wait forever: if the jump can't be made, play anyway.
+    const giveUp = setTimeout(() => { if (range.current === rg) { done(); if (wantPlay.current && a.paused) a.play().catch(() => {}); } }, 6000);
+    const done = () => { clearTimeout(giveUp); evs.forEach((e) => a.removeEventListener(e, tryIt)); };
+    function tryIt() {
+      if (range.current !== rg) return done();
+      if (!a.duration) return;
+      const t = target();
+      if (Math.abs(a.currentTime - t) > 0.25) { try { a.currentTime = t; } catch { /* not seekable yet */ } }
+      if (Math.abs(a.currentTime - t) <= 0.25) { done(); if (wantPlay.current && a.paused) a.play().catch(() => {}); }
+    }
+    evs.forEach((e) => a.addEventListener(e, tryIt));
+    tryIt();
+  };
+  const endOf = (a, rg) => (rg.frac ? rg.end * (a.duration || Infinity) : rg.end);
+  const finishRange = () => {
+    const rg = range.current;
+    if (!rg) return;
+    range.current = null;
+    audioRef.current?.pause();
+    wantPlay.current = false;
+    setPlaying(false);
+    lastEnded.current = performance.now();
+    rg.onEnd?.();
+  };
 
   // Wire audio element events once.
   useEffect(() => {
@@ -121,7 +161,8 @@ export function useRecitation({
         altIndex.current += 1;
         console.warn('[audio] source failed, trying backup', next);
         a.src = next;
-        if (wantPlay.current) a.play().catch(() => {});
+        if (range.current?.i === live.current.index && range.current.start > 0) seekTo(a, range.current);
+        else if (wantPlay.current) a.play().catch(() => {});
         return;
       }
       setLoading(false);
@@ -130,11 +171,24 @@ export function useRecitation({
     };
     const startPending = (v) => {
       stage.current = pending.current;
-      const src = stage.current === 'intro' ? v?.intro : v?.audio;
+      const rg = range.current?.i === live.current.index ? range.current : null;
+      const src = stage.current === 'intro' ? v?.intro : (rg?.url || v?.audio);
       if (!src) return;
       a.src = src;
-      if (wantPlay.current) a.play().catch(() => {});
+      if (stage.current === 'main' && rg?.start > 0) seekTo(a, rg);
+      else if (wantPlay.current) a.play().catch(() => {});
     };
+    // Stop at the end of the part (checked often while playing, so the cut lands in the pause).
+    let raf = 0;
+    const watch = () => {
+      cancelAnimationFrame(raf);
+      const rg = range.current;
+      if (!rg || stage.current !== 'main' || a.paused) return;
+      if (a.currentTime >= endOf(a, rg)) { finishRange(); return; }
+      raf = requestAnimationFrame(watch);
+    };
+    const onTime = () => { const rg = range.current; if (rg && stage.current === 'main' && a.currentTime >= endOf(a, rg)) finishRange(); };
+    const onPlaying = () => watch();
     const onEnded = () => {
       const L = live.current;
       lastEnded.current = performance.now();
@@ -145,8 +199,12 @@ export function useRecitation({
         const v = L.verses?.[L.index];
         stage.current = 'main';
         altIndex.current = 0;
-        if (v?.audio) { a.src = v.audio; a.play().catch(() => {}); return; }
+        const rg = range.current?.i === L.index ? range.current : null;
+        const src = rg?.url || v?.audio;
+        if (src) { a.src = src; if (rg?.start > 0) seekTo(a, rg); else a.play().catch(() => {}); return; }
       }
+      // A part that runs to the end of the file.
+      if (range.current) { finishRange(); return; }
       const c = counts.current;
       c.verse += 1;
       if (c.verse < L.repeatVerse) {
@@ -183,7 +241,12 @@ export function useRecitation({
     a.addEventListener('waiting', onWaiting);
     a.addEventListener('error', onError);
     a.addEventListener('ended', onEnded);
+    a.addEventListener('timeupdate', onTime);
+    a.addEventListener('playing', onPlaying);
     return () => {
+      cancelAnimationFrame(raf);
+      a.removeEventListener('timeupdate', onTime);
+      a.removeEventListener('playing', onPlaying);
       a.removeEventListener('play', onPlay);
       a.removeEventListener('pause', onPause);
       a.removeEventListener('canplay', onCanPlay);
@@ -230,6 +293,7 @@ export function useRecitation({
   }, [load]);
 
   const pause = useCallback(() => {
+    range.current = null;
     wantPlay.current = false;
     audioRef.current?.pause();
   }, []);
@@ -243,8 +307,22 @@ export function useRecitation({
     load(live.current.index, true);
   }, [load]);
 
+  /**
+   * Play part of verse i: times = { start, end, frac?, url? } (seconds, or fractions of the file when
+   * frac). onEnd fires when the part is over (instead of onFinish).
+   */
+  const playRange = useCallback((i, times, onEnd) => {
+    counts.current.verse = 0;
+    syncCounts();
+    wantPlay.current = true;
+    range.current = { i, ...times, onEnd };
+    if (i === live.current.index) load(i, true);
+    else live.current.onIndexChange(i);
+  }, [load]);
+
   /** Jump to a verse and start playing it. */
   const playAt = useCallback((i) => {
+    range.current = null;
     counts.current.verse = 0;
     syncCounts();
     wantPlay.current = true;
@@ -257,5 +335,5 @@ export function useRecitation({
     syncCounts();
   }, []);
 
-  return { playing, loading, error, toggle, play, pause, replay, playAt, resetCounts, repeatState };
+  return { playing, loading, error, toggle, play, pause, replay, playAt, playRange, resetCounts, repeatState };
 }
