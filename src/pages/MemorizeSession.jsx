@@ -14,7 +14,7 @@ import SettingsSheet, { LOOP } from '../components/SettingsSheet';
 import { ProgressBar } from '../components/ProgressRing';
 import { resolveReciter, withAudio } from '../lib/reciters';
 import { matchRecitation, verseWords } from '../lib/recite';
-import { splitVerse, partText, analyzeAudio, partTimes } from '../lib/verseParts';
+import { isLong, partText, analyzeAudio, planParts } from '../lib/verseParts';
 import Icon from '../components/Icon';
 
 export default function MemorizeSession() {
@@ -76,27 +76,40 @@ export default function MemorizeSession() {
   reciterRef.current = reciter;
   const sayToken = useRef(0);
   const phaseRef = useRef(null);
-  const partsCache = useRef(new Map());
-  const timesCache = useRef(new Map());
-  const partsOf = useCallback((v) => {
-    const key = `${v.key}|${splitRef.current}`;
-    if (!partsCache.current.has(key)) partsCache.current.set(key, splitVerse(v.text, { surah: v.surah, ayah: v.ayah }, splitRef.current));
-    return partsCache.current.get(key);
-  }, []);
-  // Where each part starts/ends in this reciter's recording (found from his pauses, else estimated).
-  const timesOf = useCallback((v, ps) => {
-    const key = `${reciterRef.current}|${v.key}|${splitRef.current}`;
-    if (!timesCache.current.has(key)) {
-      timesCache.current.set(key, (async () => {
-        const a = withAudio([v], reciterRef.current)[0];
-        for (const url of [a.audio, ...(a.audioAlts || [])]) {
-          try { const an = await analyzeAudio(url); return partTimes(ps, an).map((x) => ({ ...x, url: an.local || url })); } catch { /* try the next source */ }
+  // The plan for a verse: its parts and where each one is in this reciter's recording.
+  // Long verses are cut where HE stops (found by listening to his recording); if the recording
+  // can't be analysed, they are split by the text (pause marks) with estimated times.
+  const plans = useRef(new Map()); // key → { parts, times } once known
+  const planJobs = useRef(new Map());
+  const [, setPlanTick] = useState(0);
+  const planKey = (v) => `${reciterRef.current}|${v.key}|${splitRef.current}`;
+  const planOf = useCallback((v) => {
+    const key = planKey(v);
+    if (!planJobs.current.has(key)) {
+      planJobs.current.set(key, (async () => {
+        const ctx = { surah: v.surah, ayah: v.ayah };
+        let plan = null;
+        if (isLong(v.text, ctx, splitRef.current)) {
+          const a = withAudio([v], reciterRef.current)[0];
+          for (const url of [a.audio, ...(a.audioAlts || [])]) {
+            try {
+              const an = await analyzeAudio(url);
+              const pl = planParts(v.text, ctx, an, splitRef.current);
+              plan = { ...pl, times: pl.times.map((x) => ({ ...x, url: an.local || url })) };
+              break;
+            } catch { /* try the next source */ }
+          }
         }
-        return partTimes(ps, null);
+        plan ||= planParts(v.text, ctx, null, splitRef.current);
+        plans.current.set(key, plan);
+        setPlanTick((n) => n + 1);
+        return plan;
       })());
     }
-    return timesCache.current.get(key);
-  }, []);
+    return planJobs.current.get(key);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Parts to show/check right now (the plan if ready, else the text-only split).
+  const partsOf = useCallback((v) => plans.current.get(planKey(v))?.parts || planParts(v.text, { surah: v.surah, ayah: v.ayah }, null, splitRef.current).parts, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- "your turn": speech recognition checks the recited words against the verse ----
   const mic = useVoiceTurn(); // only used to ask for microphone permission up front
@@ -157,12 +170,16 @@ export default function MemorizeSession() {
     setPhase('sheikh');
     phaseRef.current = 'sheikh';
     const token = ++sayToken.current;
-    if (ps.length <= 1) { playerRef.current.playAt(i); return; }
     if (indexRef.current !== i) { indexRef.current = i; setIndex(i); }
-    const times = await timesOf(v, ps);
+    if (!isLong(v.text, { surah: v.surah, ayah: v.ayah }, splitRef.current)) { playerRef.current.playAt(i); return; }
+    const plan = await planOf(v);
     if (token !== sayToken.current || phaseRef.current === null) return; // stopped meanwhile
-    playerRef.current.playRange(i, times[p], () => startYourTurn());
-  }, [partsOf, timesOf]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (plan.parts.length <= 1) { playerRef.current.playAt(i); return; }
+    const q = Math.min(p, plan.parts.length - 1);
+    partRef.current = q;
+    setPart(q);
+    playerRef.current.playRange(i, plan.times[q], () => startYourTurn());
+  }, [partsOf, planOf]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Called the moment the sheikh's audio ends (or right away in tasmee).
   const startYourTurn = useCallback((at) => {

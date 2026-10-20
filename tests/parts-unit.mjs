@@ -8,7 +8,7 @@ export function withMarks(text, afterSkeletons) {
   for (const w of text.split(' ')) { out.push(w); if (want.length && skeleton(w) === want[0]) { out.push('ۚ'); want.shift(); } }
   return out.join(' ');
 }
-const k255 = withMarks(FX.verses['2:255'], ['لقيوم', 'نوم', 'لرض', 'بذنه', 'خلفهم', 'ش', 'لرض', 'حفظهم']);
+const k255 = withMarks(FX.verses['2:255'], ['لقيوم', 'نوم', 'لرض', 'بذنه', 'خلفهم', 'ش', 'ولرض', 'حفظهم']);
 const res = []; const ck = (n, ok, i = '') => { res.push(ok); console.log(ok ? 'PASS' : 'FAIL', n, i); };
 for (const [name, text, ctx] of [['2:255 (with marks)', k255, { surah: 2, ayah: 255 }], ['2:282 (no marks)', FX.verses['2:282'], { surah: 2, ayah: 282 }], ['112:1', FX.verses['112:1'], { surah: 112, ayah: 1 }], ['67:2', FX.verses['67:2'], { surah: 67, ayah: 2 }], ['2:1 (Basmala? no)', FX.verses['2:1'], { surah: 2, ayah: 1 }]]) {
   for (const mode of ['auto', 'short', 'off']) {
