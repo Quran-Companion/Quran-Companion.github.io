@@ -190,7 +190,7 @@ try {
   await q.click('.turn-idle .btn-primary');
   check('No analysis possible: still goes part by part', await phaseIs(q, 'turn-you', 20000) && (await badge(q)).includes('الجزء ١'));
   const est = (await plays(q)).pop();
-  check('…cut estimated near the right place (within 1.5 s of his breath)', est && Math.abs(est.to - silences.find(([a]) => a > est.to - 2)?.[0]) < 1.5, est && fmt(est));
+  check('…cut estimated near the right place (within 1.5 s of his breath)', est && Math.min(...silences.map(([a, b2]) => (est.to < a ? a - est.to : est.to > b2 ? est.to - b2 : 0))) < 1.5, est && fmt(est));
 
   // ---- settings ----
   const r = await newPage({ settings: { memMode: 'talqeen', reciter: 'alafasy', talqeenSplit: 'off' } });

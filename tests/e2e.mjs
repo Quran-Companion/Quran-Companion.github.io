@@ -226,7 +226,8 @@ try {
     await sleep(150);
     const found = await page.$$eval('.reciter-item', (e) => e.map((x) => x.textContent.trim()));
     check('Typing "المنشاوي" finds Al-Minshawi (murattal + mujawwad)', found.length === 2 && found.every((x) => x.includes('المنشاوي')), found.join(' | '));
-    await page.click('.sheet input', { clickCount: 3 });
+    await page.$eval('.sheet input', (e) => e.select());
+    await page.keyboard.press('Backspace');
     await page.type('.sheet input', 'منشاوي');
     await sleep(100);
     check('Partial name "منشاوي" also works', (await count('.reciter-item')) === 2);

@@ -52,6 +52,13 @@ export function useRecitation({
   const [error, setError] = useState(null);
   const [repeatState, setRepeatState] = useState({ verse: 0, range: 0 });
 
+  // The verse loaded in the audio element right now. Kept here, not only in React state: with the
+  // screen off the browser stops re-rendering the page, so the next verse must be started directly
+  // from the audio "ended" event (see onEnded) — the screen catches up when it's visible again.
+  const playing_i = useRef(index);
+  const loadedUrl = useRef(null);
+  const playRef = useRef(null);
+  const pauseRef = useRef(null);
   // Latest values for event handlers.
   const live = useRef({});
   live.current = { verses, index, onIndexChange, repeatVerse, repeatRange, autoAdvance, onFinish };
@@ -67,6 +74,8 @@ export function useRecitation({
     const a = audioRef.current;
     const v = live.current.verses?.[i];
     if (!a || !v?.audio) return;
+    playing_i.current = i;
+    loadedUrl.current = v.audio;
     altIndex.current = 0;
     setError(null);
     const rg = range.current?.i === i ? range.current : null;
@@ -143,7 +152,7 @@ export function useRecitation({
     const onCanPlay = () => setLoading(false);
     const onWaiting = () => setLoading(true);
     const onError = () => {
-      const v = live.current.verses?.[live.current.index];
+      const v = live.current.verses?.[playing_i.current];
       if (stage.current === 'lead') { startPending(v); return; }
       // Basmala failed: try its backups, else go straight to the verse.
       if (stage.current === 'intro') {
@@ -161,7 +170,7 @@ export function useRecitation({
         altIndex.current += 1;
         console.warn('[audio] source failed, trying backup', next);
         a.src = next;
-        if (range.current?.i === live.current.index && range.current.start > 0) seekTo(a, range.current);
+        if (range.current?.i === playing_i.current && range.current.start > 0) seekTo(a, range.current);
         else if (wantPlay.current) a.play().catch(() => {});
         return;
       }
@@ -171,7 +180,7 @@ export function useRecitation({
     };
     const startPending = (v) => {
       stage.current = pending.current;
-      const rg = range.current?.i === live.current.index ? range.current : null;
+      const rg = range.current?.i === playing_i.current ? range.current : null;
       const src = stage.current === 'intro' ? v?.intro : (rg?.url || v?.audio);
       if (!src) return;
       a.src = src;
@@ -191,15 +200,16 @@ export function useRecitation({
     const onPlaying = () => watch();
     const onEnded = () => {
       const L = live.current;
+      const at = playing_i.current;
       lastEnded.current = performance.now();
       // Silent lead-in done → the real recording.
-      if (stage.current === 'lead') { startPending(L.verses?.[L.index]); return; }
+      if (stage.current === 'lead') { startPending(L.verses?.[at]); return; }
       // Basmala done → the verse itself (not counted as a repeat).
       if (stage.current === 'intro') {
-        const v = L.verses?.[L.index];
+        const v = L.verses?.[at];
         stage.current = 'main';
         altIndex.current = 0;
-        const rg = range.current?.i === L.index ? range.current : null;
+        const rg = range.current?.i === at ? range.current : null;
         const src = rg?.url || v?.audio;
         if (src) { a.src = src; if (rg?.start > 0) seekTo(a, rg); else a.play().catch(() => {}); return; }
       }
@@ -215,17 +225,20 @@ export function useRecitation({
       }
       c.verse = 0;
       const last = L.verses.length - 1;
-      if (L.autoAdvance && L.index < last) {
+      // Start the next verse right here, inside the "ended" event — this keeps playing with the
+      // screen locked (the browser allows it, and nothing waits for the page to re-render).
+      if (L.autoAdvance && at < last) {
         syncCounts();
-        L.onIndexChange(L.index + 1); // effect below loads & plays
+        load(at + 1, true);
+        L.onIndexChange(at + 1); // the screen follows
         return;
       }
-      if (L.autoAdvance && L.index >= last) {
+      if (L.autoAdvance && at >= last) {
         c.range += 1;
         if (c.range < L.repeatRange) {
           syncCounts();
-          if (L.index === 0) load(0, true);
-          else L.onIndexChange(0);
+          load(0, true);
+          L.onIndexChange(0);
           return;
         }
       }
@@ -233,7 +246,7 @@ export function useRecitation({
       syncCounts();
       wantPlay.current = false;
       setPlaying(false);
-      L.onFinish?.({ completedRange: L.autoAdvance && L.index >= last });
+      L.onFinish?.({ completedRange: L.autoAdvance && at >= last });
     };
     a.addEventListener('play', onPlay);
     a.addEventListener('pause', onPause);
@@ -263,6 +276,8 @@ export function useRecitation({
   const currentUrl = verses?.[index]?.audio;
   useEffect(() => {
     if (!currentUrl) return;
+    // Already playing this verse (the player moved on by itself) → nothing to do.
+    if (playing_i.current === index && loadedUrl.current === currentUrl && audioRef.current?.src && wantPlay.current) return;
     load(index, wantPlay.current);
   }, [index, currentUrl, load]);
 
@@ -281,6 +296,17 @@ export function useRecitation({
     navigator.mediaSession.setActionHandler('previoustrack', () => index > 0 && onIndexChange(index - 1));
     navigator.mediaSession.setActionHandler('nexttrack', () => index < verses.length - 1 && onIndexChange(index + 1));
   }, [index, verses, title, onIndexChange]);
+  // Play / pause from the lock screen or headphones.
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return;
+    try {
+      navigator.mediaSession.setActionHandler('play', () => playRef.current?.());
+      navigator.mediaSession.setActionHandler('pause', () => pauseRef.current?.());
+    } catch { /* not supported */ }
+  }, []);
+  useEffect(() => {
+    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = playing ? 'playing' : 'paused';
+  }, [playing]);
 
   const play = useCallback(() => {
     const a = audioRef.current;
@@ -288,7 +314,7 @@ export function useRecitation({
     wantPlay.current = true;
     setError(null);
     // Not started yet (or at the very start) → load, which adds the lead-in.
-    if (!a.src || stage.current === 'lead' || a.currentTime === 0) load(live.current.index, true);
+    if (!a.src || stage.current === 'lead' || a.currentTime === 0 || playing_i.current !== live.current.index) load(live.current.index, true);
     else a.play().catch((e) => e.name !== 'AbortError' && setError('audio'));
   }, [load]);
 
@@ -335,5 +361,7 @@ export function useRecitation({
     syncCounts();
   }, []);
 
+  playRef.current = play;
+  pauseRef.current = pause;
   return { playing, loading, error, toggle, play, pause, replay, playAt, playRange, resetCounts, repeatState };
 }
