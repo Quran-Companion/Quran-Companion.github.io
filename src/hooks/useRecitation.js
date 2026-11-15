@@ -76,6 +76,7 @@ export function useRecitation({
     if (!a || !v?.audio) return;
     playing_i.current = i;
     loadedUrl.current = v.audio;
+    a.loop = false;
     altIndex.current = 0;
     setError(null);
     const rg = range.current?.i === i ? range.current : null;
@@ -197,7 +198,12 @@ export function useRecitation({
       raf = requestAnimationFrame(watch);
     };
     const onTime = () => { const rg = range.current; if (rg && stage.current === 'main' && a.currentTime >= endOf(a, rg)) finishRange(); };
-    const onPlaying = () => watch();
+    // "Repeat the verse ∞": let the file loop by itself (no code needed between repeats — keeps
+    // going with the screen locked). Not for the Basmala / lead-in, nor for parts of a verse.
+    const onPlaying = () => {
+      a.loop = stage.current === 'main' && !range.current && live.current.repeatVerse >= 999;
+      watch();
+    };
     const onEnded = () => {
       const L = live.current;
       const at = playing_i.current;
@@ -284,6 +290,11 @@ export function useRecitation({
   useEffect(() => {
     if (audioRef.current) { audioRef.current.defaultPlaybackRate = speed; audioRef.current.playbackRate = speed; }
   }, [speed, currentUrl]);
+  // Turning "repeat the verse ∞" on or off while it plays.
+  useEffect(() => {
+    const a = audioRef.current;
+    if (a && !a.paused) a.loop = stage.current === 'main' && !range.current && repeatVerse >= 999;
+  }, [repeatVerse]);
 
   // Lock-screen / headset controls.
   useEffect(() => {

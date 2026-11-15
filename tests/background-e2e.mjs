@@ -13,7 +13,7 @@ for (let i = 0; i < n; i++) wav[44 + i] = Math.round(128 + 60 * Math.sin(i / 3))
 const res = []; const check = (name, ok, info = '') => { res.push(ok); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${info ? `  — ${info}` : ''}`); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const b = await puppeteer.launch({ executablePath: '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox', '--autoplay-policy=no-user-gesture-required', '--mute-audio'] });
-async function run({ surah, from, to, settings, reader = false }) {
+async function run({ surah, from, to, settings, reader = false, noSurahFiles = false }) {
   const p = await b.newPage();
   await p.setViewport({ width: 390, height: 844, isMobile: true });
   await p.evaluateOnNewDocument((s) => {
@@ -27,7 +27,9 @@ async function run({ surah, from, to, settings, reader = false }) {
     const RAF = window.requestAnimationFrame; window.requestAnimationFrame = (f) => RAF(hold(f));
     window.__wake = () => { window.__off = false; held.splice(0).forEach((f) => f()); };
     const P = HTMLMediaElement.prototype.play;
-    HTMLMediaElement.prototype.play = function (...a) { const s = String(this.src); if (!s.startsWith('data:')) window.__played.push({ file: s.split('/').pop(), off: window.__off }); return P.apply(this, a); };
+    window.__els = new Set();
+    HTMLMediaElement.prototype.play = function (...a) { window.__els.add(this); const s = String(this.src); if (!s.startsWith('data:')) window.__played.push({ file: s.split('/').pop(), url: s, off: window.__off }); return P.apply(this, a); };
+    window.__state = () => [...window.__els].filter((e) => e.src && !String(e.src).startsWith('data:')).map((e) => ({ url: String(e.src), loop: e.loop, paused: e.paused, t: e.currentTime }));
   }, settings);
   await p.setRequestInterception(true);
   p.on('request', (r) => {
@@ -35,6 +37,7 @@ async function run({ surah, from, to, settings, reader = false }) {
     if (u.endsWith('/v1/surah')) return r.respond({ status: 200, headers: CORS, contentType: 'application/json', body: JSON.stringify({ code: 200, data: FX.chapters.map(head) }) });
     const m = u.match(/surah\/(\d+)\/quran-uthmani/);
     if (m) { const c = FX.chapters[m[1] - 1]; return r.respond({ status: 200, headers: CORS, contentType: 'application/json', body: JSON.stringify({ code: 200, data: { ...head(c), ayahs: Array.from({ length: c.ayahs }, (_, i) => ({ number: 1000 + i + 1, numberInSurah: i + 1, text: FX.verses[`${c.number}:${i + 1}`], juz: 30, page: 600, sajda: false })) } }) }); }
+    if (noSurahFiles && u.includes('/audio-surah/')) return r.respond({ status: 404, headers: CORS, body: 'not found' });
     if (u.includes('everyayah.com') || u.includes('islamic.network')) return r.respond({ status: 200, headers: CORS, contentType: 'audio/wav', body: wav });
     return r.continue();
   });
@@ -83,14 +86,29 @@ check('Reading page (المصحف), screen off: keeps going verse after verse', 
 // 5) Reader repeat button
 const files112 = async (pg) => (await pg.evaluate(() => window.__played.map((x) => x.file))).filter((f) => /^112/.test(f));
 p = await run({ surah: 112, settings: { readerRepeat: 'surah' }, reader: true });
+await sleep(4000);
+let st = await p.evaluate(() => window.__state());
+let pl5 = await p.evaluate(() => window.__played.map((x) => x.url));
+console.log('   state:', JSON.stringify(st));
+check('"تكرار السورة ∞": the whole surah plays as ONE file', pl5.length === 1 && /audio-surah\/128\/ar\.alafasy\/112\.mp3$/.test(pl5[0]), pl5.join(' , '));
+check('…set to loop by itself, and still playing after 4 s with the screen off', st.length === 1 && st[0].loop === true && st[0].paused === false);
+await p.evaluate(() => window.__wake()); await sleep(300);
+const note = await p.$eval('.loop-note', (e) => e.textContent).catch(() => '');
+check('…with a note explaining it on the page', note.includes('ملف واحد'), note.slice(0, 60));
+await p.click('.toolbar .play-btn'); await sleep(300);
+st = await p.evaluate(() => window.__state());
+check('…and the play button pauses it', st.every((x) => x.paused));
+// no whole-surah file for this reciter → verse by verse, still repeating
+p = await run({ surah: 112, settings: { readerRepeat: 'surah' }, reader: true, noSurahFiles: true });
 await sleep(6500);
 let f5 = await files112(p);
 const loops = f5.filter((f) => f === '112004.mp3').length;
-check('Reader "تكرار السورة ∞", screen off: the surah starts again from verse 1 after the last verse', loops >= 2 && f5.lastIndexOf('112001.mp3') > f5.indexOf('112004.mp3'), f5.join(' → '));
+check('If the surah file is missing: falls back to verse by verse, still repeating the surah (screen off)', loops >= 2 && f5.lastIndexOf('112001.mp3') > f5.indexOf('112004.mp3'), f5.join(' → '));
 p = await run({ surah: 112, settings: { readerRepeat: 'verse' }, reader: true });
 await sleep(4000);
 f5 = await files112(p);
-check('Reader "تكرار الآية ∞", screen off: the same verse again and again', f5.length >= 4 && f5.every((f) => f === '112001.mp3'), f5.join(' → '));
+st = await p.evaluate(() => window.__state());
+check('Reader "تكرار الآية ∞", screen off: the same verse file loops by itself', f5.length >= 1 && f5.every((f) => f === '112001.mp3') && st.some((x) => /112001/.test(x.url) && x.loop && !x.paused), `${f5.join(' → ')} ${JSON.stringify(st)}`);
 p = await run({ surah: 112, settings: { readerRepeat: 'off' }, reader: true });
 await sleep(5000);
 f5 = await files112(p);

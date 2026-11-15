@@ -5,11 +5,12 @@ import { useProgress } from '../context/ProgressContext';
 import { getSurah } from '../lib/quranApi';
 import { useAsync } from '../hooks/useAsync';
 import { useRecitation } from '../hooks/useRecitation';
+import { useSurahLoop } from '../hooks/useSurahLoop';
 import { ErrorState, VerseSkeleton } from '../components/States';
 import { AyahNumber, toArabicDigits } from '../components/Verse';
 import { Transport } from '../components/AudioControls';
 import SettingsSheet from '../components/SettingsSheet';
-import { resolveReciter } from '../lib/reciters';
+import { resolveReciter, surahAudio } from '../lib/reciters';
 import { ProgressBar } from '../components/ProgressRing';
 import Icon from '../components/Icon';
 
@@ -47,6 +48,22 @@ export default function SurahReader() {
     speed,
   });
 
+  // "Repeat the surah": play it as ONE looping file — keeps going with the screen locked all night.
+  // If that file can't be played for this reciter, fall back to verse by verse (also repeats).
+  const loopUrls = useMemo(() => (repeat === 'surah' && valid ? surahAudio(reciter, n) : []), [repeat, reciter, n, valid]);
+  const [loopFailed, setLoopFailed] = useState(false);
+  useEffect(() => { setLoopFailed(false); }, [loopUrls.join('|')]); // eslint-disable-line react-hooks/exhaustive-deps
+  const loopMode = loopUrls.length > 0 && !loopFailed;
+  const loop = useSurahLoop({
+    urls: loopMode ? loopUrls : [],
+    speed,
+    title: surah ? `${surah.name || ''}` : '',
+    onFail: (was) => { setLoopFailed(true); if (was) player.playAt(0); },
+  });
+  // Only one of the two plays at a time.
+  useEffect(() => { if (loopMode) player.pause(); else loop.pause(); }, [loopMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  const active = loopMode ? loop : player;
+
   // Jump to #aN after load.
   useEffect(() => {
     if (!verses.length || !hash) return;
@@ -67,9 +84,10 @@ export default function SurahReader() {
   useEffect(() => { setRevealed(new Set()); }, [hideAll, n]);
 
   const playVerse = useCallback((i) => {
+    if (loopMode) { loop.pause(); }
     if (i === index && player.playing) player.pause();
     else player.playAt(i);
-  }, [index, player]);
+  }, [index, player, loop, loopMode]);
 
   const onVerseClick = (i) => {
     if (!selecting) return;
@@ -118,10 +136,10 @@ export default function SurahReader() {
 
           <div className="toolbar card">
             <Transport
-              player={player}
+              player={active}
               size="sm"
-              canPrev={index > 0}
-              canNext={index < verses.length - 1}
+              canPrev={!loopMode && index > 0}
+              canNext={!loopMode && index < verses.length - 1}
               onPrev={() => { player.resetCounts(); setIndex((i) => Math.max(0, i - 1)); }}
               onNext={() => { player.resetCounts(); setIndex((i) => Math.min(verses.length - 1, i + 1)); }}
             />
@@ -148,6 +166,13 @@ export default function SurahReader() {
               </button>
             </div>
             <p className="toolbar-reciter muted small"><Icon name="headphones" size={14} /> {lang === 'ar' ? resolveReciter(reciter).ar : resolveReciter(reciter).en}</p>
+            {loopMode && (
+              <p className="muted small loop-note">
+                <Icon name="repeat" size={14} /> {lang === 'ar'
+                  ? 'السورة بتشتغل كملف واحد بيعيد نفسه، عشان تفضل شغالة والشاشة مقفولة (من غير تظليل الآية الحالية).'
+                  : 'The surah plays as one looping file so it keeps going with the screen locked (no current-verse highlight).'}
+              </p>
+            )}
             {player.error && <p className="error-text small">{t.errors.audio}</p>}
           </div>
 

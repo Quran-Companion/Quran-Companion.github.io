@@ -111,3 +111,17 @@ export function verseAudio(reciterId, surah, ayah, global) {
 export function withAudio(verses, reciterId) {
   return verses.map((v) => ({ ...v, ...verseAudio(reciterId, v.surah, v.ayah, v.global) }));
 }
+
+/**
+ * The whole surah as ONE audio file (Islamic Network CDN), most likely address first, then the
+ * same recording at other bitrates. Used for endless "repeat the surah": one file set to loop keeps
+ * playing with the screen locked — nothing has to switch files. Empty when the reciter has none
+ * (the caller then plays verse by verse).
+ */
+export function surahAudio(reciterId, surah) {
+  const r = resolveReciter(reciterId);
+  if (!r?.cdn) return [];
+  const [rate, edition] = r.cdn.split('/');
+  const rates = [rate, '128', '192', '64', '32'].filter((x, i, a) => a.indexOf(x) === i);
+  return rates.map((b) => `https://cdn.islamic.network/quran/audio-surah/${b}/${edition}/${surah}.mp3`);
+}
