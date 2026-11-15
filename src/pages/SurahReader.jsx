@@ -16,7 +16,11 @@ import Icon from '../components/Icon';
 export default function SurahReader() {
   const { number } = useParams();
   const n = Number(number);
-  const { t, lang, reciter, speed, numberFmt } = useSettings();
+  const { t, lang, reciter, speed, numberFmt, update } = useSettings();
+  // Repeat: 'off' → 'surah' (the whole surah again and again) → 'verse' (this verse again and again).
+  const repeat = useSettings().readerRepeat || 'off';
+  const nextRepeat = { off: 'surah', surah: 'verse', verse: 'off' }[repeat];
+  const LOOP = 999; // practically endless — stop it with pause
   const { memorized, toggleMemorized, stats } = useProgress();
   const navigate = useNavigate();
   const { hash } = useLocation();
@@ -37,7 +41,8 @@ export default function SurahReader() {
     reciter,
     index,
     onIndexChange: setIndex,
-    repeatVerse: 1,
+    repeatVerse: repeat === 'verse' ? LOOP : 1,
+    repeatRange: repeat === 'surah' ? LOOP : 1,
     autoAdvance: true,
     speed,
   });
@@ -121,6 +126,17 @@ export default function SurahReader() {
               onNext={() => { player.resetCounts(); setIndex((i) => Math.min(verses.length - 1, i + 1)); }}
             />
             <div className="toolbar-row">
+              <button
+                className={`btn btn-soft btn-sm repeat-btn ${repeat !== 'off' ? 'is-on' : ''}`}
+                onClick={() => { player.resetCounts(); update({ readerRepeat: nextRepeat }); }}
+                aria-pressed={repeat !== 'off'}
+                title={lang === 'ar' ? 'اضغط للتغيير' : 'Tap to change'}
+              >
+                <Icon name="repeat" size={18} />
+                {lang === 'ar'
+                  ? { off: 'تكرار', surah: 'تكرار السورة ∞', verse: 'تكرار الآية ∞' }[repeat]
+                  : { off: 'Repeat', surah: 'Repeat surah ∞', verse: 'Repeat verse ∞' }[repeat]}
+              </button>
               <button className="btn btn-soft btn-sm" onClick={() => setShowSettings(true)}>
                 <Icon name="settings" size={18} /> {lang === 'ar' ? 'القارئ والخط' : 'Reciter & text'}
               </button>

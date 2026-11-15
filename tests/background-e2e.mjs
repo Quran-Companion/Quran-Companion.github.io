@@ -80,5 +80,30 @@ p = await run({ surah: 67, settings: {}, reader: true });
 await sleep(10000);
 pl = await p.evaluate(() => window.__played.map((x) => x.file).filter((f) => /^067/.test(f)));
 check('Reading page (المصحف), screen off: keeps going verse after verse', pl.length >= 10 && pl.includes('067010.mp3'), `${pl.length} verses played, last ${pl[pl.length - 1]}`);
+// 5) Reader repeat button
+const files112 = async (pg) => (await pg.evaluate(() => window.__played.map((x) => x.file))).filter((f) => /^112/.test(f));
+p = await run({ surah: 112, settings: { readerRepeat: 'surah' }, reader: true });
+await sleep(6500);
+let f5 = await files112(p);
+const loops = f5.filter((f) => f === '112004.mp3').length;
+check('Reader "تكرار السورة ∞", screen off: the surah starts again from verse 1 after the last verse', loops >= 2 && f5.lastIndexOf('112001.mp3') > f5.indexOf('112004.mp3'), f5.join(' → '));
+p = await run({ surah: 112, settings: { readerRepeat: 'verse' }, reader: true });
+await sleep(4000);
+f5 = await files112(p);
+check('Reader "تكرار الآية ∞", screen off: the same verse again and again', f5.length >= 4 && f5.every((f) => f === '112001.mp3'), f5.join(' → '));
+p = await run({ surah: 112, settings: { readerRepeat: 'off' }, reader: true });
+await sleep(5000);
+f5 = await files112(p);
+check('Reader without repeat: reads the surah once and stops', f5.filter((f) => f === '112004.mp3').length === 1 && f5.length === 4, f5.join(' → '));
+await p.evaluate(() => window.__wake());
+// the button cycles off → surah → verse → off, and is remembered
+const label = () => p.$eval('.repeat-btn', (e) => e.textContent.trim());
+const labels = [await label()];
+for (let k = 0; k < 3; k++) { await p.click('.repeat-btn'); await sleep(150); labels.push(await label()); }
+check('Button cycles: تكرار → تكرار السورة ∞ → تكرار الآية ∞ → تكرار', labels.join(' | ') === 'تكرار | تكرار السورة ∞ | تكرار الآية ∞ | تكرار', labels.join(' | '));
+await p.click('.repeat-btn'); await sleep(300);
+const saved = await p.evaluate(() => JSON.parse(localStorage.getItem('qc:settings') || '{}').readerRepeat);
+check('Choice is saved (remembered next time)', saved === 'surah', String(saved));
+await p.screenshot({ path: 'reader-repeat.png' });
 console.log(`\n${res.filter(Boolean).length}/${res.length} passed`);
 await b.close();

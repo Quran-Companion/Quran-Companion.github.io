@@ -17,6 +17,7 @@ const defaults = {
   repeatRange: 1,
   autoNext: true,
   hideOnTurn: false, // talqeen: hide the verse while it's your turn
+  readerRepeat: 'off', // Quran reader: 'off' | 'surah' | 'verse'
   talqeenSplit: 'auto', // talqeen: long verses in parts — auto (~10 words) | short (~6) | off
   turnWait: 'normal', // talqeen: how long a pause ends your turn (fast | normal | slow)
   reciteStrict: 'normal', // talqeen: how much of the verse must be said (easy | normal | strict)
